@@ -1,6 +1,11 @@
 # Credentials
 .flashyrc
 
+# Source files
+*.md
+*.gs
+flashy.js
+
 # Node
 node_modules/
 package-lock.json
