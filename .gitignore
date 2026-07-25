@@ -6,6 +6,10 @@
 *.gs
 flashy.js
 
+# Data files
+*.csv
+lsl.example
+
 # Node
 node_modules/
 package-lock.json
