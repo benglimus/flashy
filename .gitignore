@@ -1,4 +1,17 @@
+# Credentials
 .flashyrc
+
+# Node
 node_modules/
-*.log
+package-lock.json
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary import files
+*-remaining.csv
+remaining.csv
