@@ -596,11 +596,6 @@ const LearnScreen = ({ session, deck, onBack }) => {
     const absDx = Math.abs(dx);
     const absDy = Math.abs(dy);
 
-    if (absDx < 20 && absDy < 20) {
-      setFlipped(f => !f);
-      return;
-    }
-
     if (absDx > absDy && dx < -50) {
       goNext();
       return;
