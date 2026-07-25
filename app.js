@@ -271,16 +271,15 @@ const DeckListScreen = ({ session, onSelectDeck, onOpenSettings }) => {
     if (!session) return;
     setLoading(true);
     try {
-      const res = await apiGet(`${session.url}?endpoint=getDecks&pwHash=${session.pwHash}`);
-      if (res.status === 'ok') {
-        const d = res.decks || [];
-        setDecks(d);
-        const stats = {};
-        for (const deck of d) {
-          const sRes = await apiGet(`${session.url}?endpoint=getDeckStats&deckId=${deck.id}&pwHash=${session.pwHash}`);
-          if (sRes.status === 'ok') stats[deck.id] = sRes.stats;
-        }
-        setDeckStats(stats);
+      const [decksRes, statsRes] = await Promise.all([
+        apiGet(`${session.url}?endpoint=getDecks&pwHash=${session.pwHash}`),
+        apiGet(`${session.url}?endpoint=getAllDeckStats&pwHash=${session.pwHash}`)
+      ]);
+      if (decksRes.status === 'ok') {
+        setDecks(decksRes.decks || []);
+      }
+      if (statsRes.status === 'ok') {
+        setDeckStats(statsRes.deckStats || {});
       }
     } catch (err) {
       console.error('Error loading decks:', err);
