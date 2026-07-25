@@ -540,9 +540,149 @@ const ReviewScreen = ({ session, deck, onBack }) => {
   );
 };
 
+// ─── LearnScreen ───
+
+const LearnScreen = ({ session, deck, onBack }) => {
+  const [cards, setCards] = useState([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [flipped, setFlipped] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [shuffled, setShuffled] = useState(false);
+  const touchStartRef = useRef({ x: 0, y: 0 });
+
+  useEffect(() => {
+    const loadCards = async () => {
+      setLoading(true);
+      try {
+        const res = await apiGet(`${session.url}?endpoint=getCards&deckId=${deck.id}&pwHash=${session.pwHash}`);
+        if (res.status === 'ok') setCards(res.cards || []);
+      } catch (err) {
+        console.error('Error loading cards:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadCards();
+  }, [session, deck]);
+
+  const goNext = () => {
+    setCurrentIndex(i => (i + 1) % cards.length);
+    setFlipped(false);
+  };
+
+  const goPrev = () => {
+    setCurrentIndex(i => (i - 1 + cards.length) % cards.length);
+    setFlipped(false);
+  };
+
+  const shuffleCards = () => {
+    const shuffledArr = [...cards].sort(() => Math.random() - 0.5);
+    setCards(shuffledArr);
+    setCurrentIndex(0);
+    setFlipped(false);
+    setShuffled(true);
+  };
+
+  const handleTouchStart = (e) => {
+    touchStartRef.current = {
+      x: e.touches[0].clientX,
+      y: e.touches[0].clientY
+    };
+  };
+
+  const handleTouchEnd = (e) => {
+    const dx = e.changedTouches[0].clientX - touchStartRef.current.x;
+    const dy = e.changedTouches[0].clientY - touchStartRef.current.y;
+    const absDx = Math.abs(dx);
+    const absDy = Math.abs(dy);
+
+    if (absDx < 20 && absDy < 20) {
+      setFlipped(f => !f);
+      return;
+    }
+
+    if (absDx > absDy && dx < -50) {
+      goNext();
+      return;
+    }
+
+    if (absDx > absDy && dx > 50) {
+      goPrev();
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Spinner className="h-8 w-8 text-blue-600" />
+      </div>
+    );
+  }
+
+  if (cards.length === 0) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center p-6">
+        <p className="text-4xl mb-4">No cards yet</p>
+        <p className="text-gray-500 mb-6">Add some cards to this deck first</p>
+        <button className="px-6 py-2 bg-blue-600 text-white rounded-lg" onClick={onBack}>Back</button>
+      </div>
+    );
+  }
+
+  const card = cards[currentIndex];
+
+  return (
+    <div className="min-h-screen flex flex-col bg-gray-50 dark:bg-gray-900 select-none">
+      <div className="flex items-center justify-between px-4 py-3 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+        <button className="text-blue-600 min-h-[44px] px-2" onClick={onBack}>Back</button>
+        <span className="font-bold">Learn</span>
+        <span className="text-sm text-gray-500">{currentIndex + 1} / {cards.length}</span>
+      </div>
+
+      <div className="flex-1 flex items-center justify-center p-6"
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+        onClick={() => setFlipped(f => !f)}>
+        <div className="flashcard-flip w-full max-w-sm" style={{ minHeight: '300px' }}>
+          <div className={`flashcard-inner w-full h-full ${flipped ? 'flipped' : ''}`} style={{ minHeight: '300px' }}>
+            <div className="flashcard-front w-full h-full bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 flex flex-col items-center justify-center p-6 min-h-[300px]">
+              {card.photoUrl && (
+                <img src={getDirectPhotoUrl(card.photoUrl)} className="max-w-full max-h-40 object-contain rounded-lg mb-4" alt="" />
+              )}
+              <p className="text-xl text-center font-medium">{card.question}</p>
+              {!flipped && <p className="text-xs text-gray-400 mt-4 swipe-hint">tap to reveal</p>}
+            </div>
+            <div className="flashcard-back w-full h-full bg-blue-50 dark:bg-blue-950/30 rounded-2xl shadow-lg border border-blue-200 dark:border-blue-900/30 flex flex-col items-center justify-center p-6 min-h-[300px]">
+              <p className="text-xl text-center font-bold text-blue-900 dark:text-blue-100">{card.answer}</p>
+              {card.notes && <p className="text-sm text-blue-700 dark:text-blue-300 mt-3 text-center">{card.notes}</p>}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="px-4 pb-6 pt-2 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 pb-safe">
+        <div className="flex space-x-2">
+          <button className="flex-1 py-3 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-xl font-medium min-h-[52px] active:scale-95 transition-transform"
+            onClick={goPrev}>
+            ← Prev
+          </button>
+          <button className="py-3 px-4 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-xl font-medium min-h-[52px] active:scale-95 transition-transform"
+            onClick={shuffleCards}>
+            🔀
+          </button>
+          <button className="flex-1 py-3 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-xl font-medium min-h-[52px] active:scale-95 transition-transform"
+            onClick={goNext}>
+            Next →
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── DeckDetailScreen ───
 
-const DeckDetailScreen = ({ session, deck, onBack, onReview }) => {
+const DeckDetailScreen = ({ session, deck, onBack, onReview, onLearn }) => {
   const [tab, setTab] = useState('cards');
   const [cards, setCards] = useState([]);
   const [stats, setStats] = useState({});
@@ -600,12 +740,16 @@ const DeckDetailScreen = ({ session, deck, onBack, onReview }) => {
       <div className="flex items-center justify-between px-4 py-3 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
         <button className="text-blue-600 min-h-[44px] px-2" onClick={onBack}>Back</button>
         <span className="font-bold truncate max-w-[200px]">{deck.name}</span>
-        {(stats.dueToday || 0) > 0 ? (
-          <button className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium min-h-[44px]"
-            onClick={() => onReview(deck)}>Review ({stats.dueToday})</button>
-        ) : (
-          <div className="w-16"></div>
-        )}
+        <div className="flex space-x-2">
+          {(stats.total || 0) > 0 && (
+            <button className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium min-h-[44px] active:scale-95 transition-transform"
+              onClick={() => onLearn(deck)}>Learn</button>
+          )}
+          {(stats.dueToday || 0) > 0 ? (
+            <button className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium min-h-[44px] active:scale-95 transition-transform"
+              onClick={() => onReview(deck)}>Review ({stats.dueToday})</button>
+          ) : null}
+        </div>
       </div>
 
       <div className="flex border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
@@ -926,6 +1070,11 @@ const App = () => {
     setScreen('review');
   };
 
+  const handleLearn = (deck) => {
+    setCurrentDeck(deck);
+    setScreen('learn');
+  };
+
   const handleBackToDecks = () => {
     setScreen('decks');
     setCurrentDeck(null);
@@ -939,10 +1088,13 @@ const App = () => {
         <DeckListScreen session={session} onSelectDeck={handleSelectDeck} onOpenSettings={() => setShowSettings(true)} />
       )}
       {screen === 'detail' && currentDeck && (
-        <DeckDetailScreen session={session} deck={currentDeck} onBack={handleBackToDecks} onReview={handleReview} />
+        <DeckDetailScreen session={session} deck={currentDeck} onBack={handleBackToDecks} onReview={handleReview} onLearn={handleLearn} />
       )}
       {screen === 'review' && currentDeck && (
         <ReviewScreen session={session} deck={currentDeck} onBack={handleBackToDecks} />
+      )}
+      {screen === 'learn' && currentDeck && (
+        <LearnScreen session={session} deck={currentDeck} onBack={handleBackToDecks} />
       )}
       {screen === 'progress' && (
         <ProgressScreen session={session} />
