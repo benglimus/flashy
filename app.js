@@ -300,12 +300,8 @@ const DeckListScreen = ({ session, onSelectDeck, onOpenSettings }) => {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      <div className="flex items-center justify-between px-4 py-3 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+      <div className="flex items-center px-4 py-3 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
         <h1 className="text-lg font-bold">Flashy</h1>
-        <button onClick={onOpenSettings}
-          className="min-h-[44px] min-w-[44px] px-4 py-2 text-sm bg-gray-100 dark:bg-gray-700 text-blue-600 dark:text-blue-400 font-medium rounded-lg">
-          Settings
-        </button>
       </div>
 
       <div className="p-4">
@@ -337,6 +333,13 @@ const DeckListScreen = ({ session, onSelectDeck, onOpenSettings }) => {
             })}
           </div>
         )}
+      </div>
+
+      <div className="fixed bottom-40 right-6 z-30">
+        <button className="w-14 h-14 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 rounded-full shadow-lg flex items-center justify-center active:scale-95 transition-transform"
+          onClick={onOpenSettings}>
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+        </button>
       </div>
 
       <div className="fixed bottom-24 right-6 z-30">
@@ -482,10 +485,8 @@ const ReviewScreen = ({ session, deck, onBack }) => {
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50 dark:bg-gray-900 select-none">
-      <div className="flex items-center justify-between px-4 py-3 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-        <button className="text-blue-600 min-h-[44px] px-2" onClick={onBack}>Back</button>
+      <div className="flex items-center justify-center px-4 py-3 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
         <span className="text-sm text-gray-500">{currentIndex + 1} / {cards.length}</span>
-        <div className="w-16"></div>
       </div>
 
       <div className="h-1 bg-gray-200 dark:bg-gray-700">
@@ -629,7 +630,6 @@ const LearnScreen = ({ session, deck, onBack }) => {
   return (
     <div className="min-h-screen flex flex-col bg-gray-50 dark:bg-gray-900 select-none">
       <div className="flex items-center justify-between px-4 py-3 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-        <button className="text-blue-600 min-h-[44px] px-2" onClick={onBack}>Back</button>
         <span className="font-bold">Learn</span>
         <span className="text-sm text-gray-500">{currentIndex + 1} / {cards.length}</span>
       </div>
@@ -670,6 +670,13 @@ const LearnScreen = ({ session, deck, onBack }) => {
             Next →
           </button>
         </div>
+      </div>
+
+      <div className="fixed bottom-24 right-6 z-30">
+        <button className="w-14 h-14 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 rounded-full shadow-lg flex items-center justify-center active:scale-95 transition-transform"
+          onClick={onBack}>
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
+        </button>
       </div>
     </div>
   );
@@ -732,19 +739,8 @@ const DeckDetailScreen = ({ session, deck, onBack, onReview, onLearn }) => {
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50 dark:bg-gray-900">
-      <div className="flex items-center justify-between px-4 py-3 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-        <button className="text-blue-600 min-h-[44px] px-2" onClick={onBack}>Back</button>
-        <span className="font-bold truncate max-w-[200px]">{deck.name}</span>
-        <div className="flex space-x-2">
-          {(stats.total || 0) > 0 && (
-            <button className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium min-h-[44px] active:scale-95 transition-transform"
-              onClick={() => onLearn(deck)}>Learn</button>
-          )}
-          {(stats.dueToday || 0) > 0 ? (
-            <button className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium min-h-[44px] active:scale-95 transition-transform"
-              onClick={() => onReview(deck)}>Review ({stats.dueToday})</button>
-          ) : null}
-        </div>
+      <div className="flex items-center px-4 py-3 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+        <span className="font-bold truncate">{deck.name}</span>
       </div>
 
       <div className="flex border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
@@ -822,6 +818,30 @@ const DeckDetailScreen = ({ session, deck, onBack, onReview, onLearn }) => {
         )}
       </div>
 
+      <div className="fixed bottom-72 right-6 z-30">
+        <button className="w-14 h-14 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 rounded-full shadow-lg flex items-center justify-center active:scale-95 transition-transform"
+          onClick={onBack}>
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
+        </button>
+      </div>
+
+      {(stats.total || 0) > 0 && (
+        <div className="fixed bottom-56 right-6 z-30">
+          <button className="w-14 h-14 bg-green-600 hover:bg-green-700 text-white rounded-full shadow-lg flex items-center justify-center active:scale-95 transition-transform"
+            onClick={() => onLearn(deck)}>
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>
+          </button>
+        </div>
+      )}
+      {(stats.dueToday || 0) > 0 && (
+        <div className="fixed bottom-40 right-6 z-30">
+          <button className="w-14 h-14 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-lg flex items-center justify-center active:scale-95 transition-transform relative"
+            onClick={() => onReview(deck)}>
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+            <span className="absolute -top-1 -right-1 bg-orange-500 text-white text-xs font-bold rounded-full min-w-[20px] h-5 flex items-center justify-center px-1">{stats.dueToday}</span>
+          </button>
+        </div>
+      )}
       {tab === 'cards' && (
         <div className="fixed bottom-24 right-6 z-30">
           <button className="w-14 h-14 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-lg flex items-center justify-center text-2xl active:scale-95"
@@ -883,24 +903,23 @@ const ProgressScreen = ({ session }) => {
   const [decks, setDecks] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const load = async () => {
-      setLoading(true);
-      try {
-        const [deckRes, progRes] = await Promise.all([
-          apiGet(`${session.url}?endpoint=getDecks&pwHash=${session.pwHash}`),
-          apiGet(`${session.url}?endpoint=getProgress&pwHash=${session.pwHash}`)
-        ]);
-        if (deckRes.status === 'ok') setDecks(deckRes.decks || []);
-        if (progRes.status === 'ok') setProgress(progRes.progress || null);
-      } catch (err) {
-        console.error('Error loading progress:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [deckRes, progRes] = await Promise.all([
+        apiGet(`${session.url}?endpoint=getDecks&pwHash=${session.pwHash}`),
+        apiGet(`${session.url}?endpoint=getProgress&pwHash=${session.pwHash}`)
+      ]);
+      if (deckRes.status === 'ok') setDecks(deckRes.decks || []);
+      if (progRes.status === 'ok') setProgress(progRes.progress || null);
+    } catch (err) {
+      console.error('Error loading progress:', err);
+    } finally {
+      setLoading(false);
+    }
   }, [session]);
+
+  useEffect(() => { load(); }, [load]);
 
   if (loading) {
     return (
@@ -963,6 +982,13 @@ const ProgressScreen = ({ session }) => {
             </div>
           </>
         )}
+      </div>
+
+      <div className="fixed bottom-24 right-6 z-30">
+        <button className="w-14 h-14 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 rounded-full shadow-lg flex items-center justify-center active:scale-95 transition-transform"
+          onClick={load}>
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+        </button>
       </div>
     </div>
   );
