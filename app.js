@@ -199,8 +199,8 @@ const AddDeckModal = ({ session, onClose, onAdded }) => {
 // ─── AddCardModal ───
 
 const AddCardModal = ({ deckId, session, onClose, onAdded }) => {
-  const [question, setQuestion] = useState('');
-  const [answer, setAnswer] = useState('');
+  const [front, setFront] = useState('');
+  const [back, setBack] = useState('');
   const [notes, setNotes] = useState('');
   const [photoFile, setPhotoFile] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(null);
@@ -215,7 +215,7 @@ const AddCardModal = ({ deckId, session, onClose, onAdded }) => {
   };
 
   const handleSubmit = async () => {
-    if (!question.trim() || !answer.trim()) return;
+    if (!front.trim() || !back.trim()) return;
     setSubmitting(true);
     let photoUrl = '';
     if (photoFile) {
@@ -223,7 +223,7 @@ const AddCardModal = ({ deckId, session, onClose, onAdded }) => {
       const res = await apiPost(session.url, { endpoint: 'uploadPhoto', pwHash: session.pwHash, photoData: dataUrl, photoName: photoFile.name });
       if (res && res.status === 'ok' && res.photoUrl) photoUrl = res.photoUrl;
     }
-    await apiPost(session.url, { endpoint: 'createCard', pwHash: session.pwHash, deckId, question, answer, notes, photoUrl });
+    await apiPost(session.url, { endpoint: 'createCard', pwHash: session.pwHash, deckId, front, back, notes, photoUrl });
     onAdded();
   };
 
@@ -232,9 +232,9 @@ const AddCardModal = ({ deckId, session, onClose, onAdded }) => {
       <div className="bg-white dark:bg-gray-800 w-full sm:max-w-md sm:rounded-xl rounded-t-xl p-4 space-y-3 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <h3 className="text-lg font-bold">Add Card</h3>
         <textarea className="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700"
-          placeholder="Question (front)" value={question} onChange={e => setQuestion(e.target.value)} rows={2} autoFocus />
+          placeholder="Front" value={front} onChange={e => setFront(e.target.value)} rows={2} autoFocus />
         <textarea className="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700"
-          placeholder="Answer (back)" value={answer} onChange={e => setAnswer(e.target.value)} rows={2} />
+          placeholder="Back" value={back} onChange={e => setBack(e.target.value)} rows={2} />
         <textarea className="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700"
           placeholder="Notes (optional)" value={notes} onChange={e => setNotes(e.target.value)} rows={2} />
         {photoPreview && (
@@ -248,7 +248,7 @@ const AddCardModal = ({ deckId, session, onClose, onAdded }) => {
         <button className="text-sm text-blue-600" onClick={() => fileRef.current?.click()}>Add photo</button>
         <div className="flex space-x-2">
           <button className="flex-1 py-2 bg-blue-600 text-white rounded-lg min-h-[44px] disabled:opacity-50 flex items-center justify-center space-x-2"
-            disabled={!question.trim() || !answer.trim() || submitting} onClick={handleSubmit}>
+            disabled={!front.trim() || !back.trim() || submitting} onClick={handleSubmit}>
             {submitting && <Spinner />}
             <span>Add</span>
           </button>
@@ -359,6 +359,7 @@ const ReviewScreen = ({ session, deck, onBack }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [direction, setDirection] = useState('front→back');
   const [sessionBatchId] = useState(() => crypto.randomUUID ? crypto.randomUUID() : Date.now().toString());
   const [sessionStats, setSessionStats] = useState({ reviewed: 0, correct: 0, startTime: Date.now() });
   const [complete, setComplete] = useState(false);
@@ -482,11 +483,18 @@ const ReviewScreen = ({ session, deck, onBack }) => {
 
   const card = cards[currentIndex];
   const progress = ((currentIndex) / cards.length) * 100;
+  const showFrontFirst = direction === 'front→back';
+  const initialFace = showFrontFirst ? card.front : card.back;
+  const flippedFace = showFrontFirst ? card.back : card.front;
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50 dark:bg-gray-900 select-none">
-      <div className="flex items-center justify-center px-4 py-3 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+      <div className="flex items-center justify-between px-4 py-3 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
         <span className="text-sm text-gray-500">{currentIndex + 1} / {cards.length}</span>
+        <button className="text-xs px-2 py-1 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 active:scale-95 transition-transform"
+          onClick={() => setDirection(d => d === 'front→back' ? 'back→front' : 'front→back')}>
+          {direction === 'front→back' ? 'front → back' : 'back → front'}
+        </button>
       </div>
 
       <div className="h-1 bg-gray-200 dark:bg-gray-700">
@@ -504,11 +512,11 @@ const ReviewScreen = ({ session, deck, onBack }) => {
               {card.photoUrl && (
                 <img src={getDirectPhotoUrl(card.photoUrl)} className="max-w-full max-h-40 object-contain rounded-lg mb-4" alt="" />
               )}
-              <p className="text-xl text-center font-medium">{card.question}</p>
+              <p className="text-xl text-center font-medium">{initialFace}</p>
               {!flipped && <p className="text-xs text-gray-400 mt-4 swipe-hint">tap to reveal</p>}
             </div>
             <div className="flashcard-back w-full h-full bg-blue-50 dark:bg-blue-950/30 rounded-2xl shadow-lg border border-blue-200 dark:border-blue-900/30 flex flex-col items-center justify-center p-6 min-h-[300px]">
-              <p className="text-xl text-center font-bold text-blue-900 dark:text-blue-100">{card.answer}</p>
+              <p className="text-xl text-center font-bold text-blue-900 dark:text-blue-100">{flippedFace}</p>
               {card.notes && <p className="text-sm text-blue-700 dark:text-blue-300 mt-3 text-center">{card.notes}</p>}
             </div>
           </div>
@@ -549,6 +557,7 @@ const LearnScreen = ({ session, deck, onBack }) => {
   const [flipped, setFlipped] = useState(false);
   const [loading, setLoading] = useState(true);
   const [shuffled, setShuffled] = useState(false);
+  const [direction, setDirection] = useState('front→back');
   const touchStartRef = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
@@ -626,12 +635,21 @@ const LearnScreen = ({ session, deck, onBack }) => {
   }
 
   const card = cards[currentIndex];
+  const showFrontFirst = direction === 'front→back';
+  const initialFace = showFrontFirst ? card.front : card.back;
+  const flippedFace = showFrontFirst ? card.back : card.front;
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50 dark:bg-gray-900 select-none">
       <div className="flex items-center justify-between px-4 py-3 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
         <span className="font-bold">Learn</span>
-        <span className="text-sm text-gray-500">{currentIndex + 1} / {cards.length}</span>
+        <div className="flex items-center space-x-2">
+          <span className="text-sm text-gray-500">{currentIndex + 1} / {cards.length}</span>
+          <button className="text-xs px-2 py-1 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 active:scale-95 transition-transform"
+            onClick={() => setDirection(d => d === 'front→back' ? 'back→front' : 'front→back')}>
+            {direction === 'front→back' ? 'front → back' : 'back → front'}
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 flex items-center justify-center p-6"
@@ -644,11 +662,11 @@ const LearnScreen = ({ session, deck, onBack }) => {
               {card.photoUrl && (
                 <img src={getDirectPhotoUrl(card.photoUrl)} className="max-w-full max-h-40 object-contain rounded-lg mb-4" alt="" />
               )}
-              <p className="text-xl text-center font-medium">{card.question}</p>
+              <p className="text-xl text-center font-medium">{initialFace}</p>
               {!flipped && <p className="text-xs text-gray-400 mt-4 swipe-hint">tap to reveal</p>}
             </div>
             <div className="flashcard-back w-full h-full bg-blue-50 dark:bg-blue-950/30 rounded-2xl shadow-lg border border-blue-200 dark:border-blue-900/30 flex flex-col items-center justify-center p-6 min-h-[300px]">
-              <p className="text-xl text-center font-bold text-blue-900 dark:text-blue-100">{card.answer}</p>
+              <p className="text-xl text-center font-bold text-blue-900 dark:text-blue-100">{flippedFace}</p>
               {card.notes && <p className="text-sm text-blue-700 dark:text-blue-300 mt-3 text-center">{card.notes}</p>}
             </div>
           </div>
@@ -763,8 +781,8 @@ const DeckDetailScreen = ({ session, deck, onBack, onReview, onLearn }) => {
                 ) : (
                   <div className="flex items-start justify-between">
                     <div className="flex-1 min-w-0 mr-2">
-                      <p className="font-medium truncate">{card.question}</p>
-                      <p className="text-sm text-gray-500 truncate">{card.answer}</p>
+                      <p className="font-medium truncate">{card.front}</p>
+                      <p className="text-sm text-gray-500 truncate">{card.back}</p>
                       {card.notes && <p className="text-xs text-gray-400 truncate mt-1">{card.notes}</p>}
                     </div>
                     <div className="flex space-x-1 flex-shrink-0">
@@ -799,7 +817,7 @@ const DeckDetailScreen = ({ session, deck, onBack, onReview, onLearn }) => {
                     <p className="text-sm font-medium text-gray-500 mb-2">Weak Cards ({progress.weakCards.length})</p>
                     {progress.weakCards.slice(0, 5).map(wc => (
                       <p key={wc.id} className="text-sm truncate py-1 border-b border-gray-100 dark:border-gray-700 last:border-0">
-                        {wc.question}
+                        {wc.front}
                       </p>
                     ))}
                   </div>
@@ -857,23 +875,23 @@ const DeckDetailScreen = ({ session, deck, onBack, onReview, onLearn }) => {
 // ─── EditCardInline ───
 
 const EditCardInline = ({ card, session, onSave, onCancel }) => {
-  const [question, setQuestion] = useState(card.question);
-  const [answer, setAnswer] = useState(card.answer);
+  const [front, setFront] = useState(card.front);
+  const [back, setBack] = useState(card.back);
   const [notes, setNotes] = useState(card.notes || '');
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
     setSaving(true);
-    await onSave({ question, answer, notes });
+    await onSave({ front, back, notes });
     setSaving(false);
   };
 
   return (
     <div className="space-y-2">
       <textarea className="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 text-sm"
-        value={question} onChange={e => setQuestion(e.target.value)} rows={2} />
+        value={front} onChange={e => setFront(e.target.value)} rows={2} />
       <textarea className="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 text-sm"
-        value={answer} onChange={e => setAnswer(e.target.value)} rows={2} />
+        value={back} onChange={e => setBack(e.target.value)} rows={2} />
       <textarea className="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 text-sm"
         value={notes} onChange={e => setNotes(e.target.value)} rows={1} placeholder="Notes" />
       <div className="flex space-x-2">
@@ -963,8 +981,8 @@ const ProgressScreen = ({ session }) => {
                 <p className="text-sm font-medium text-gray-500 mb-3">Weak Cards ({progress.weakCards.length})</p>
                 {progress.weakCards.map(wc => (
                   <div key={wc.id} className="py-2 border-b border-gray-100 dark:border-gray-700 last:border-0">
-                    <p className="text-sm font-medium truncate">{wc.question}</p>
-                    <p className="text-xs text-gray-400 truncate">{wc.answer}</p>
+                    <p className="text-sm font-medium truncate">{wc.front}</p>
+                    <p className="text-xs text-gray-400 truncate">{wc.back}</p>
                   </div>
                 ))}
               </div>
