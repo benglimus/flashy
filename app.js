@@ -105,6 +105,11 @@ const parseSpeakTag = (notes) => {
   };
 };
 
+const filterDisplayNotes = (notes) => {
+  if (!notes) return '';
+  return notes.split('\n').filter(l => !l.trimStart().startsWith('[')).join('\n').trim();
+};
+
 const API_URL_KEY = 'flashy_api_url';
 const SESSION_KEY = 'flashy_session';
 const SETTINGS_KEY = 'flashy_settings';
@@ -540,7 +545,7 @@ const ReviewScreen = ({ session, deck, onBack }) => {
             </div>
             <div className="flashcard-back w-full h-full bg-blue-50 dark:bg-blue-950/30 rounded-2xl shadow-lg border border-blue-200 dark:border-blue-900/30 flex flex-col items-center justify-center p-6 min-h-[300px]">
               <p className="text-xl text-center font-bold text-blue-900 dark:text-blue-100">{flippedFace}</p>
-              {card.notes && <p className="text-sm text-blue-700 dark:text-blue-300 mt-3 text-center">{card.notes}</p>}
+              {card.notes && <p className="text-sm text-blue-700 dark:text-blue-300 mt-3 text-center">{filterDisplayNotes(card.notes)}</p>}
             </div>
           </div>
         </div>
@@ -702,7 +707,7 @@ const LearnScreen = ({ session, deck, onBack }) => {
             </div>
             <div className="flashcard-back w-full h-full bg-blue-50 dark:bg-blue-950/30 rounded-2xl shadow-lg border border-blue-200 dark:border-blue-900/30 flex flex-col items-center justify-center p-6 min-h-[300px]">
               <p className="text-xl text-center font-bold text-blue-900 dark:text-blue-100">{flippedFace}</p>
-              {card.notes && <p className="text-sm text-blue-700 dark:text-blue-300 mt-3 text-center">{card.notes}</p>}
+              {card.notes && <p className="text-sm text-blue-700 dark:text-blue-300 mt-3 text-center">{filterDisplayNotes(card.notes)}</p>}
             </div>
           </div>
         </div>
@@ -829,7 +834,7 @@ const DeckDetailScreen = ({ session, deck, onBack, onReview, onLearn }) => {
                     <div className="flex-1 min-w-0 mr-2">
                       <p className="font-medium truncate">{card.front}</p>
                       <p className="text-sm text-gray-500 truncate">{card.back}</p>
-                      {card.notes && <p className="text-xs text-gray-400 truncate mt-1">{card.notes}</p>}
+                      {card.notes && <p className="text-xs text-gray-400 truncate mt-1">{filterDisplayNotes(card.notes)}</p>}
                     </div>
                     <div className="flex space-x-1 flex-shrink-0">
                       <button className="p-2 text-gray-400 hover:text-blue-600" onClick={() => setEditingCard(card.id)}>
