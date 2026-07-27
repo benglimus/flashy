@@ -83,6 +83,28 @@ const getDirectPhotoUrl = (url) => {
   return url;
 };
 
+const speak = (text, lang, rate, pitch) => {
+  if (!text || !window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = lang;
+  utterance.rate = rate;
+  utterance.pitch = pitch;
+  window.speechSynthesis.speak(utterance);
+};
+
+const parseSpeakTag = (notes) => {
+  if (!notes) return null;
+  const match = notes.match(/\[SPEAK:([^,\]]+),([^,\]]+),([^\]]+)\](.*)/);
+  if (!match) return null;
+  return {
+    lang: match[1].trim(),
+    rate: parseFloat(match[2]),
+    pitch: parseFloat(match[3]),
+    text: match[4].trim(),
+  };
+};
+
 const API_URL_KEY = 'flashy_api_url';
 const SESSION_KEY = 'flashy_session';
 const SETTINGS_KEY = 'flashy_settings';
@@ -486,6 +508,7 @@ const ReviewScreen = ({ session, deck, onBack }) => {
   const showFrontFirst = direction === 'front→back';
   const initialFace = showFrontFirst ? card.front : card.back;
   const flippedFace = showFrontFirst ? card.back : card.front;
+  const speakTag = parseSpeakTag(card.notes);
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50 dark:bg-gray-900 select-none">
@@ -522,6 +545,17 @@ const ReviewScreen = ({ session, deck, onBack }) => {
           </div>
         </div>
       </div>
+
+      {speakTag && (
+        <div className="fixed bottom-40 left-6 z-30">
+          <button className="w-14 h-14 bg-purple-600 hover:bg-purple-700 text-white rounded-full shadow-lg flex items-center justify-center active:scale-95 transition-transform"
+            onClick={(e) => { e.stopPropagation(); speak(speakTag.text, speakTag.lang, speakTag.rate, speakTag.pitch); }}>
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.536 8.464a5 5 0 010 7.072M18.364 5.636a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+            </svg>
+          </button>
+        </div>
+      )}
 
       {flipped && (
         <div className="px-4 pb-6 pt-2 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 pb-safe">
@@ -638,6 +672,7 @@ const LearnScreen = ({ session, deck, onBack }) => {
   const showFrontFirst = direction === 'front→back';
   const initialFace = showFrontFirst ? card.front : card.back;
   const flippedFace = showFrontFirst ? card.back : card.front;
+  const speakTag = parseSpeakTag(card.notes);
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50 dark:bg-gray-900 select-none">
@@ -672,6 +707,17 @@ const LearnScreen = ({ session, deck, onBack }) => {
           </div>
         </div>
       </div>
+
+      {speakTag && (
+        <div className="fixed bottom-24 left-6 z-30">
+          <button className="w-14 h-14 bg-purple-600 hover:bg-purple-700 text-white rounded-full shadow-lg flex items-center justify-center active:scale-95 transition-transform"
+            onClick={(e) => { e.stopPropagation(); speak(speakTag.text, speakTag.lang, speakTag.rate, speakTag.pitch); }}>
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.536 8.464a5 5 0 010 7.072M18.364 5.636a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+            </svg>
+          </button>
+        </div>
+      )}
 
       <div className="px-4 pb-6 pt-2 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 pb-safe">
         <div className="flex space-x-2">
