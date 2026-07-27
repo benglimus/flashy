@@ -809,7 +809,7 @@ const DeckDetailScreen = ({ session, deck, onBack, onReview, onLearn }) => {
   return (
     <div className="min-h-screen flex flex-col bg-gray-50 dark:bg-gray-900">
       <div className="flex items-center px-4 py-3 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-        <span className="font-bold truncate">{deck.name}</span>
+        <span className="font-bold">{deck.name}</span>
       </div>
 
       <div className="flex border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
