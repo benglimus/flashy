@@ -338,16 +338,16 @@ const DeckListScreen = ({ session, onSelectDeck, onOpenSettings }) => {
             <p className="text-sm">Tap + to create your first deck</p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3">
             {decks.map(deck => {
               const s = deckStats[deck.id] || {};
               return (
                 <button key={deck.id}
-                  className="text-left p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-blue-400 transition-colors min-h-[120px]"
+                  className="text-left p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-blue-400 transition-colors"
                   onClick={() => onSelectDeck(deck)}>
-                  <p className="font-bold truncate">{deck.name}</p>
-                  {deck.description && <p className="text-xs text-gray-500 truncate mt-1">{deck.description}</p>}
-                  <div className="mt-3 flex items-center space-x-3 text-xs text-gray-400">
+                  <p className="font-bold">{deck.name}</p>
+                  {deck.description && <p className="text-xs text-gray-500 mt-1">{deck.description}</p>}
+                  <div className="mt-2 flex items-center space-x-3 text-xs text-gray-400">
                     <span>{s.total || 0} cards</span>
                     {(s.dueToday || 0) > 0 && (
                       <span className="bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 px-2 py-0.5 rounded-full font-medium">

@@ -42,11 +42,27 @@ Converted all screen action buttons from header text buttons to consistent float
 - Babel standalone fails silently on JSX syntax errors, rendering a blank screen
 - Fix: Removed the misplaced button and corrected nesting
 
+### PWA manifest and icons
+
+Added PWA installability for Android and mobile home screen:
+- `manifest.json` — standalone display, dark theme/background color matching UI, portrait orientation
+- `icon-192.png` (982B) — for notifications and home screen icons
+- `icon-512.png` (3.1K) — for app drawer / play store listing
+- Icons auto-generated via Python/Pillow: dark gray background with amber lightning bolt inside card outline
+- Added `<link rel="manifest">` to `index.html`
+
+### iPhone notch safe area fix
+
+- Added top safe area padding to `#root` via `env(safe-area-inset-top)` so content doesn't overlap the status bar on notched iPhones
+- reapplied from body (ineffective with h-screen/min-h-screen) to `#root` (the React container) for reliable positioning
+
 ### Git updates
 
 | Commit | Description |
 |--------|-------------|
 | `093ed45` | Replace header action buttons with floating icon buttons across all screens |
+| `e64bd71` | add PWA manifest and icons |
+| `4aa4015` | add top safe area inset for iPhone notch |
 
 ---
 
