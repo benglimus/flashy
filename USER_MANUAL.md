@@ -19,14 +19,14 @@ A complete guide to using the Flashy flashcard app — both the web app and the 
 
 ## What Is Flashy?
 
-Flashy is a mobile-first flashcard app with spaced repetition (SM-2 algorithm). It runs as a web app in your browser (optimized for iPhone Safari) and stores all data in a Google Sheets spreadsheet via a Google Apps Script backend.
+Flashy is a mobile-first flashcard app with spaced repetition (SM-2 algorithm). It runs as a web app in your browser (optimized for iPhone Safari). Deck and card content is stored in a Google Sheets spreadsheet via a Google Apps Script backend; your review history and spaced-repetition state are stored on the device that studies them.
 
 **Two ways to use it:**
 
 | Interface | What it does |
 |-----------|-------------|
-| **Web App** | Study flashcards — create decks, add cards, review with spaced repetition, track progress |
-| **CLI Tool** | Manage data from the terminal — export/import decks, bulk import cards from CSV, backup and restore |
+| **Web App** | Study and review downloaded decks with spaced repetition; track progress on your device |
+| **CLI Tool** | Manage data from the terminal — create or import decks and cards, export, and back up / restore |
 
 ---
 
@@ -60,16 +60,18 @@ Flashy is a mobile-first flashcard app with spaced repetition (SM-2 algorithm). 
 
 Fill in the Config sheet with these rows:
 
-| Key | Value |
-|-----|-------|
-| `NEXT_DECK_ID` | `100001` |
-| `NEXT_CARD_ID` | `100001` |
-| `NEXT_LOG_ID` | `100001` |
-| `PHOTOS_FOLDER_PATH` | `Flashy/Photos` |
-| `SRS_EASE_FACTOR` | `2.5` |
-| `SRS_GRADUATE_INTERVAL` | `1` |
-| `SRS_EASY_INTERVAL` | `4` |
-| `SRS_STARTING_EASE` | `2.5` |
+| Key | Value | Used? |
+|-----|-------|-------|
+| `NEXT_DECK_ID` | `100001` | Yes — next deck ID counter |
+| `NEXT_CARD_ID` | `100001` | Yes — next card ID counter |
+| `NEXT_LOG_ID` | `100001` | Yes — next review-log ID counter |
+| `PHOTOS_FOLDER_PATH` | `Flashy/Photos` | Yes — where photos are stored |
+| `SRS_EASE_FACTOR` | `2.5` | _Reserved — not read yet_ |
+| `SRS_GRADUATE_INTERVAL` | `1` | _Reserved — not read yet_ |
+| `SRS_EASY_INTERVAL` | `4` | _Reserved — not read yet_ |
+| `SRS_STARTING_EASE` | `2.5` | _Reserved — not read yet_ |
+
+The first four keys are used by the backend (the three ID counters and the photos path). The four `SRS_*` keys are **reserved**: the spaced-repetition math currently hardcodes its own values (starting ease `2.5`, graduate interval `1` day, easy interval `4` days, ease range `1.3`–`1.5` per rate), so changing those four cells has no effect until the algorithm is wired to read them.
 
 ### 3. Create Your User Account
 
@@ -79,7 +81,7 @@ In the **Users** sheet, add:
 |--------|----------|------|--------|
 | `admin` | `yourPassword` | Your Name | `Active` |
 
-> The password is stored as plaintext in the sheet. It is hashed (SHA-256) before being sent over the network — the plaintext never leaves the sheet.
+> The password is stored as plaintext in the **Users** sheet. It is hashed (SHA-256) before being sent over the network, so only the hash travels in transit. Because the sheet itself holds the plaintext, treat that row as a secret: use a long, unique passphrase and keep the sheet private (unsalted SHA-256 is trivial to crack for anyone who can read the sheet).
 
 ### 4. Deploy the Google Apps Script Backend
 
@@ -140,7 +142,7 @@ Your credentials are saved locally so you don't have to re-enter them.
 
 ### The Decks Screen
 
-After login you see the **Decks** screen — a grid of all your decks. Each deck card shows:
+After login you see the **Decks** screen. It shows the decks you have **downloaded** to this device. Each deck card shows:
 
 - **Deck name**
 - **Description** (if set)
@@ -151,58 +153,45 @@ After login you see the **Decks** screen — a grid of all your decks. Each deck
 
 | Tab | What it shows |
 |-----|---------------|
-| **Decks** | Your deck grid |
-| **Progress** | Global stats across all decks |
+| **Decks** | Your downloaded decks |
+| **Progress** | Global stats across all your local reviews |
 
-**Creating a new deck:**
+**Downloading decks:**
 
-1. Tap the **+** button (bottom-right)
-2. Enter a name and optional description
-3. Tap **Create**
+The web app is a study client, so decks must be pulled down to your device before you can study them.
+
+1. On the Decks screen, open the menu (**⋮**, top-right)
+2. Tap **Download decks** — this lists the decks available on the server
+3. Tap **Download** next to each deck you want; that deck's cards are saved to the device
+
+The same menu offers **Export stats** (a JSON dump of your local stats and review logs) and **Clear local decks** (removes every downloaded deck and the local review log from this device; the server is untouched). To add, update, or remove decks and cards, use the **CLI** (below).
 
 ### Deck Detail
 
-Tap any deck to open its detail view. This screen has two tabs:
+Tap any deck to open its detail view. This screen has two tabs (in the web app both are **read-only**: you study and inspect, you don't edit cards here).
 
 #### Cards Tab
 
 Shows every card in the deck. Each card displays:
 
-- Front
-- Back
-- Notes (if any, tags like `[SPEAK:]` are hidden)
+- **Front**
+- **Back**
+- **Notes** (if any; a `[SPEAK:]` tag line is hidden and instead powers the speaker button)
 
-**Actions on each card:**
-
-- **Edit** (pencil icon) — tap to edit inline. Modify the front, back, or notes, then tap **Save**.
-- **Delete** (trash icon) — tap to soft-delete. You'll be asked to confirm.
-
-**Adding a card:**
-
-1. Tap the **+** button (bottom-right)
-2. Enter the **front** of the card
-3. Enter the **back** of the card
-4. Optionally add **notes** (extra context shown below the back)
-5. Optionally tap **Add photo** to attach an image
-6. Tap **Add**
+**Cards are read-only in the web app.** There are no add, edit, or delete buttons in the app's UI. To create, update, or delete cards — and to attach a photo to a card — use the **CLI** (below). Downloading a deck also pulls a fresh copy of its cards into the app.
 
 #### Stats Tab
 
-Shows statistics for the deck:
+Shows statistics for this deck, all computed from the review data stored on your device:
 
 | Stat | Meaning |
 |------|---------|
-| **Total Cards** | Number of active cards |
+| **Total Cards** | Number of cards in the deck |
 | **Due Today** | Cards that need review right now |
 | **Reviewed Today** | Cards you've already reviewed today |
-| **Mastered** | Cards with interval >= 21 days |
-| **Accuracy (30d)** | Percentage of correct ratings in the last 30 days |
-| **Streak** | Consecutive days with at least one review |
+| **Mastered** | Cards whose interval is 21 days or more |
 
-Below the stats you may see:
-
-- **Weak Cards** — cards with low ease factor that need attention
-- **Suggestions** — contextual tips (e.g., "Focus on 3 difficult cards")
+Cross-deck stats — accuracy, day streak, weak cards, and a per-deck list — are on the **Progress** screen.
 
 #### Header Buttons
 
@@ -213,7 +202,7 @@ Below the stats you may see:
 
 ### Review Mode
 
-Review Mode is the core study experience. It shows only cards that are **due for review** based on the spaced repetition algorithm.
+Review Mode is the core study experience. It shows only cards that are **due for review** based on the spaced repetition algorithm. Every rating you make updates that card's schedule on this device and is written to a **local** review log; the server is not contacted during a study session.
 
 **How to use:**
 
@@ -250,7 +239,7 @@ The direction resets each time you start a new review session.
 **During review:**
 
 - A **progress bar** at the top shows your position (e.g., "3 / 15")
-- The **Back** button in the header exits review early
+- The **Exit** button in the header (top-left) exits review early
 - If a card has a `[SPEAK:]` tag in its notes, a purple **speaker button** appears at the bottom-left — tap it to hear the text spoken aloud
 
 **When you finish all due cards:**
@@ -280,7 +269,6 @@ Learning Mode lets you **browse all cards** in a deck freely, without any SRS ra
 | Button | Action |
 |--------|--------|
 | **← Prev** | Previous card (wraps to end) |
-| **Shuffle** (icon) | Randomize card order |
 | **Next →** | Next card (wraps to start) |
 
 **Swipe gestures (mobile):**
@@ -300,19 +288,21 @@ Learning Mode lets you **browse all cards** in a deck freely, without any SRS ra
 
 ### Progress Screen
 
-Tap the **Progress** tab at the bottom to see global stats across all decks:
+Tap the **Progress** tab at the bottom to see global stats across all your local reviews:
 
 | Stat | Meaning |
 |------|---------|
-| **Accuracy** | Overall percentage of correct ratings (last 30 days) |
+| **Accuracy** | Percentage of reviews you rated "Good" or "Easy" (rating 3 or 4), from your local log |
 | **Day Streak** | Consecutive days with at least one review |
-| **Suggestions** | Tips based on your review patterns |
-| **Weak Cards** | Cards with low ease factor across all decks |
-| **Decks** | List of all your decks |
+| **Total Reviews** | Total number of reviews logged on this device |
+| **Weak Cards** | Cards with a low ease factor (below 2.0), across your downloaded decks |
+| **Decks** | Each downloaded deck: its due count and how many cards are mastered |
+
+If you haven't downloaded any decks yet, the screen prompts you to download one (Decks → **⋮** → **Download**) to start tracking progress.
 
 ### Settings
 
-Tap **Settings** in the top-right of the Decks screen to open the Settings modal.
+In the **⋮** menu on the Decks screen, tap **Settings** to open the Settings modal.
 
 | Field | What it does |
 |-------|-------------|
@@ -350,7 +340,7 @@ Create a `.flashyrc` file in the directory where you'll run commands:
 }
 ```
 
-> **Security:** Add `.flashyrc` to your `.gitignore` — it contains your password.
+> **Security:** `.flashyrc` holds your password, so keep it out of version control. This project already lists it in `.gitignore`; because the file is plaintext, also restrict read access to it (for example, `chmod 600 .flashyrc`).
 
 **Configuration priority:**
 
@@ -392,7 +382,7 @@ Creates a directory containing `data.csv` and all card photos.
 node flashy.js deck import my-spanish-vocab
 ```
 
-Creates a new deck from a directory containing `data.csv` and optional photos.
+Creates a new deck from a directory of `data.csv` plus optional photos that are uploaded and attached. The new deck's name is taken from the directory name (for example, importing from `spanish-vocab/` creates a deck called `spanish-vocab`).
 
 **Delete a deck:**
 
@@ -413,7 +403,7 @@ node flashy.js card list 100000
 Output:
 
 ```
-ID      │ Question                    │ Answer          │ Photo
+ID      │ Front                       │ Back            │ Photo
 ────────┼─────────────────────────────┼─────────────────┼──────
 100000  │ What is 'hello' in Spanish? │ Hola            │ yes
 100001  │ What is 'thank you'?        │ Gracias         │
@@ -495,7 +485,7 @@ front,back,notes,photo
 - On export, photos are named by card ID + original extension (e.g., `100000.jpg`)
 - On import, the CLI reads the file named in the `photo` column, uploads it, and attaches the URL
 - Max file size: ~50MB (Google Apps Script limit)
-- Photos are compressed to 1280px wide at 70% quality before upload
+- Photos are uploaded at their original size and quality; the app does not resize or recompress them.
 
 ### Notes Tags
 
@@ -597,7 +587,7 @@ A card is considered mastered when its interval reaches 21 days or more. This me
 | "Invalid credentials" | Your password doesn't match the Users sheet. The CLI hashes with SHA-256 before sending. |
 | "Deck not found" | Run `deck list` to see available IDs. Deck IDs are 6-digit numbers (e.g., `100000`). |
 | "data.csv not found" | You're importing a directory that doesn't contain `data.csv`. |
-| CSV parsing errors | Make sure the header row is `front,back,notes,photo`. Quote values with commas. |
+| CSV parsing errors | The header row must include `front` and `back` (or the legacy aliases `question`/`answer`); `notes` and `photo` are optional. Quote any values that contain commas. |
 | "fetch is not defined" | You need Node.js 18 or higher. |
 | Photo upload fails | Check the file exists, is a supported format, and is under 50MB. |
 | Permission denied on `.flashyrc` | Run `chmod 600 .flashyrc` to restrict to your user only. |
@@ -627,7 +617,6 @@ A card is considered mastered when its interval reaches 21 days or more. This me
 | Swipe left | Next card |
 | Swipe right | Previous card |
 | Tap ← Prev / Next → | Navigate |
-| Tap Shuffle | Randomize order |
 | Tap direction toggle | Switch front→back / back→front |
 
 ### File Overview
@@ -640,5 +629,4 @@ A card is considered mastered when its interval reaches 21 days or more. This me
 | `flashy.js` | CLI tool |
 | `.flashyrc` | CLI config (not in git) |
 | `SETUP.md` | Deployment guide |
-| `CLI_README.md` | CLI usage docs |
 | `USER_MANUAL.md` | This file |

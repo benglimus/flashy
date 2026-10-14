@@ -1,4 +1,4 @@
-const { useState, useEffect, useRef, useCallback } = React;
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
 // ─── Utilities ───
 
@@ -57,24 +57,6 @@ const sha256Fallback = async (message) => {
   return [h0,h1,h2,h3,h4,h5,h6,h7].map(v=>((v>>>0).toString(16).padStart(8,'0'))).join('');
 };
 
-const compressImage = (file, maxWidth = 1280, quality = 0.7) => {
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        let w = img.width, h = img.height;
-        if (w > maxWidth) { h = (maxWidth / w) * h; w = maxWidth; }
-        canvas.width = w; canvas.height = h;
-        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        resolve(canvas.toDataURL('image/jpeg', quality));
-      };
-      img.src = reader.result;
-    };
-    reader.readAsDataURL(file);
-  });
-};
 
 const getDirectPhotoUrl = (url) => {
   if (!url) return '';
@@ -119,14 +101,6 @@ const loadSettings = () => {
 };
 const saveSettings = (s) => localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
 
-const apiPost = async (url, body) => {
-  const res = await fetch(url, {
-    method: 'POST', mode: 'cors',
-    headers: { 'Content-Type': 'text/plain' },
-    body: JSON.stringify(body)
-  });
-  return await res.json();
-};
 
 const apiGet = async (url) => {
   const res = await fetch(url, { mode: 'cors' });
@@ -134,6 +108,159 @@ const apiGet = async (url) => {
   return await res.json();
 };
 
+// ─── Local deck store (offline) ───
+// Phase 1: decks are downloaded from the server into localStorage and rendered locally.
+// Users can only download / delete decks and export stats. No card-content editing.
+const DECKS_KEY = 'flashy_decks';
+const LOGS_KEY = 'flashy_logs';
+const todayIso = () => new Date().toISOString().split('T')[0];
+const defaultSrsCard = () => ({ easeFactor: 2.5, intervalDays: 0, dueDate: todayIso(), reviewCount: 0 });
+const loadLocalDecks = () => {
+  try { return JSON.parse(localStorage.getItem(DECKS_KEY)) || {}; } catch { return {}; }
+};
+const saveLocalDecks = (decks) => localStorage.setItem(DECKS_KEY, JSON.stringify(decks));
+const listLocalDeckIds = () => Object.keys(loadLocalDecks());
+const loadLocalLogs = () => {
+  try { return JSON.parse(localStorage.getItem(LOGS_KEY)) || []; } catch { return []; }
+};
+const saveLocalLogs = (logs) => localStorage.setItem(LOGS_KEY, JSON.stringify(logs));
+const appendLocalLog = (log) => {
+  const logs = loadLocalLogs();
+  logs.push(log);
+  saveLocalLogs(logs);
+};
+const deleteLocalDeck = (deckId) => {
+  const decks = loadLocalDecks();
+  delete decks[String(deckId)];
+  saveLocalDecks(decks);
+};
+const clearLocalDecks = () => {
+  saveLocalDecks({});
+  saveLocalLogs([]);
+};
+// Download a deck's cards (cards only; SRS starts fresh) into localStorage.
+// meta is a deck object from the server getDecks catalog.
+const downloadDeck = async (meta, session) => {
+  const res = await apiGet(`${session.url}?endpoint=getCards&deckId=${encodeURIComponent(meta.id)}&pwHash=${session.pwHash}`);
+  if (res.status !== 'ok') throw new Error(res.message || 'Download failed');
+  const deck = {
+    id: String(meta.id),
+    name: meta.name || 'Deck',
+    description: meta.description || '',
+    created: meta.created || todayIso(),
+    syncedAt: new Date().toISOString(),
+    cards: (res.cards || []).map(c => ({ id: String(c.id), front: c.front, back: c.back, notes: c.notes, photoUrl: c.photoUrl, created: c.created, modified: c.modified })),
+    srs: {},
+  };
+  const decks = loadLocalDecks();
+  decks[deck.id] = deck;
+  saveLocalDecks(decks);
+  return deck;
+};
+// Apply a review rating locally: update SRS state + append to the local log. SRS math ported from code.gs.
+const computeNextReview = (state, rating) => {
+  let { easeFactor, intervalDays, reviewCount } = state;
+  if (rating === 1) {
+    intervalDays = 1;
+    easeFactor = Math.max(1.3, easeFactor - 0.2);
+  } else if (rating === 2) {
+    intervalDays = Math.max(1, Math.round(intervalDays * 1.2));
+    easeFactor = Math.max(1.3, easeFactor - 0.15);
+  } else if (rating === 3) {
+    if (reviewCount === 0) intervalDays = 1;
+    else if (reviewCount === 1) intervalDays = 6;
+    else intervalDays = Math.round(intervalDays * easeFactor);
+  } else if (rating === 4) {
+    if (reviewCount === 0) intervalDays = 4;
+    else intervalDays = Math.round(intervalDays * easeFactor * 1.3);
+    easeFactor = easeFactor + 0.15;
+  }
+  const due = new Date();
+  due.setDate(due.getDate() + intervalDays);
+  return {
+    easeFactor: Math.round(easeFactor * 100) / 100,
+    intervalDays,
+    dueDate: due.toISOString().split('T')[0],
+    reviewCount: reviewCount + 1,
+  };
+};
+// Local stats for a downloaded deck. Missing SRS state counts as due-today.
+const getLocalStats = (deck) => {
+  if (!deck) return { total: 0, dueToday: 0, mastered: 0, reviewedToday: 0 };
+  const today = todayIso();
+  const total = deck.cards ? deck.cards.length : 0;
+  let dueToday = 0, mastered = 0;
+  const srs = deck.srs || {};
+  for (const c of deck.cards || []) {
+    const st = srs[String(c.id)];
+    if (!st || !st.dueDate || st.dueDate <= today) dueToday++;
+    if (st && st.intervalDays >= 21) mastered++;
+  }
+  const logs = loadLocalLogs().filter(l => String(l.deckId) === String(deck.id));
+  const reviewedToday = logs.filter(l => (l.timestamp || '').split('T')[0] === today).length;
+  return { total, dueToday, mastered, reviewedToday };
+};
+// Local progress, ported from code.gs getProgress(), computed from localStorage.
+const getLocalProgress = () => {
+  const decks = Object.values(loadLocalDecks());
+  const logs = loadLocalLogs();
+  let totalReviews = logs.length, correctReviews = 0;
+  const dailyReviews = {};
+  for (const l of logs) {
+    const rating = parseInt(l.rating);
+    if (!isNaN(rating) && rating >= 3) correctReviews++;
+    const day = String(l.timestamp || '').split('T')[0];
+    if (day) dailyReviews[day] = (dailyReviews[day] || 0) + 1;
+  }
+  const accuracy = totalReviews > 0 ? Math.round((correctReviews / totalReviews) * 100) : 0;
+  let streak = 0;
+  const d = new Date();
+  while (true) {
+    const dateStr = d.toISOString().split('T')[0];
+    if (dailyReviews[dateStr]) { streak++; d.setDate(d.getDate() - 1); } else { break; }
+  }
+  const weakCards = [];
+  for (const deck of decks) {
+    const srs = deck.srs || {};
+    for (const c of deck.cards || []) {
+      const st = srs[String(c.id)];
+      if (st && st.easeFactor < 2.0) {
+        weakCards.push({ id: c.id, deckId: deck.id, front: c.front, back: c.back, easeFactor: st.easeFactor, intervalDays: st.intervalDays });
+      }
+    }
+  }
+  const today = todayIso();
+  const hasReviewedToday = (dailyReviews[today] || 0) > 0;
+  const suggestions = [];
+  if (weakCards.length > 0) suggestions.push("Focus on " + weakCards.length + " difficult card" + (weakCards.length > 1 ? "s" : ""));
+  if (!hasReviewedToday && totalReviews > 0) suggestions.push("You haven't reviewed today");
+  if (accuracy < 60 && totalReviews > 10) suggestions.push("Try fewer cards per session to improve retention");
+  if (accuracy > 90 && streak >= 5 && totalReviews > 20) suggestions.push("Great progress! Consider adding new cards");
+  return { accuracy, streak, totalReviews, weakCards, suggestions };
+};
+
+// Export all local stats + logs as a downloadable JSON file.
+const exportStatsJSON = (session) => {
+  const decks = loadLocalDecks();
+  const logs = loadLocalLogs();
+  const payload = {
+    app: 'flashy',
+    exportedAt: new Date().toISOString(),
+    userid: session?.userid || null,
+    decks: Object.values(decks).map(d => ({ id: d.id, name: d.name, description: d.description, syncedAt: d.syncedAt, ...getLocalStats(d) })),
+    logs,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `flashy-stats-${session?.userid || 'user'}-${todayIso()}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  return payload;
+};
 // ─── AuthScreen ───
 
 const AuthScreen = ({ onLogin }) => {
@@ -188,193 +315,181 @@ const AuthScreen = ({ onLogin }) => {
   );
 };
 
-// ─── AddDeckModal ───
 
-const AddDeckModal = ({ session, onClose, onAdded }) => {
-  const [name, setName] = useState('');
-  const [desc, setDesc] = useState('');
-  const [submitting, setSubmitting] = useState(false);
+// ─── DownloadDecksModal ───
+// Shows the server's deck catalog and pulls a deck's cards into localStorage.
+const DownloadDecksModal = ({ session, onClose, onChanged }) => {
+  const [remoteDecks, setRemoteDecks] = useState(null);
+  const [downloading, setDownloading] = useState(null);
+  const [error, setError] = useState('');
 
-  const handleSubmit = async () => {
-    if (!name.trim()) return;
-    setSubmitting(true);
-    await apiPost(session.url, { endpoint: 'createDeck', pwHash: session.pwHash, name, description: desc });
-    onAdded();
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-white dark:bg-gray-800 w-full sm:max-w-md sm:rounded-xl rounded-t-xl p-4 space-y-3" onClick={e => e.stopPropagation()}>
-        <h3 className="text-lg font-bold">New Deck</h3>
-        <input className="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700"
-          placeholder="Deck name" value={name} onChange={e => setName(e.target.value)} autoFocus />
-        <textarea className="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700"
-          placeholder="Description (optional)" value={desc} onChange={e => setDesc(e.target.value)} rows={2} />
-        <div className="flex space-x-2">
-          <button className="flex-1 py-2 bg-blue-600 text-white rounded-lg min-h-[44px] disabled:opacity-50 flex items-center justify-center space-x-2"
-            disabled={!name.trim() || submitting} onClick={handleSubmit}>
-            {submitting && <Spinner />}
-            <span>Create</span>
-          </button>
-          <button className="flex-1 py-2 bg-gray-400 text-white rounded-lg" onClick={onClose}>Cancel</button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// ─── AddCardModal ───
-
-const AddCardModal = ({ deckId, session, onClose, onAdded }) => {
-  const [front, setFront] = useState('');
-  const [back, setBack] = useState('');
-  const [notes, setNotes] = useState('');
-  const [photoFile, setPhotoFile] = useState(null);
-  const [photoPreview, setPhotoPreview] = useState(null);
-  const [submitting, setSubmitting] = useState(false);
-  const fileRef = useRef(null);
-
-  const handlePhotoChange = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setPhotoFile(file);
-    setPhotoPreview(await compressImage(file));
-  };
-
-  const handleSubmit = async () => {
-    if (!front.trim() || !back.trim()) return;
-    setSubmitting(true);
-    let photoUrl = '';
-    if (photoFile) {
-      const dataUrl = await compressImage(photoFile);
-      const res = await apiPost(session.url, { endpoint: 'uploadPhoto', pwHash: session.pwHash, photoData: dataUrl, photoName: photoFile.name });
-      if (res && res.status === 'ok' && res.photoUrl) photoUrl = res.photoUrl;
+  const reload = useCallback(async () => {
+    try {
+      const res = await apiGet(`${session.url}?endpoint=getDecks&pwHash=${session.pwHash}`);
+      setRemoteDecks(res.status === 'ok' ? (res.decks || []) : []);
+    } catch (err) {
+      setError('Could not reach server. Check the Web App URL / connection.');
+      console.error(err);
+      setRemoteDecks([]);
     }
-    await apiPost(session.url, { endpoint: 'createCard', pwHash: session.pwHash, deckId, front, back, notes, photoUrl });
-    onAdded();
+  }, [session]);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  const handleDownload = async (deck) => {
+    setDownloading(deck.id);
+    setError('');
+    try {
+      await downloadDeck(deck, session);
+      if (onChanged) onChanged();
+    } catch (err) {
+      setError('Download failed: ' + err.message);
+      console.error(err);
+    } finally {
+      setDownloading(null);
+    }
   };
+
+  const downloadedIds = new Set(listLocalDeckIds());
+  const isDownloaded = (id) => downloadedIds.has(String(id));
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-white dark:bg-gray-800 w-full sm:max-w-md sm:rounded-xl rounded-t-xl p-4 space-y-3 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <h3 className="text-lg font-bold">Add Card</h3>
-        <textarea className="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700"
-          placeholder="Front" value={front} onChange={e => setFront(e.target.value)} rows={2} autoFocus />
-        <textarea className="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700"
-          placeholder="Back" value={back} onChange={e => setBack(e.target.value)} rows={2} />
-        <textarea className="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700"
-          placeholder="Notes (optional)" value={notes} onChange={e => setNotes(e.target.value)} rows={2} />
-        {photoPreview && (
-          <div className="relative inline-block">
-            <img src={photoPreview} className="w-24 h-24 object-cover rounded" alt="preview" />
-            <button className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-5 h-5 text-xs"
-              onClick={() => { setPhotoPreview(null); setPhotoFile(null); }}>x</button>
+      <div className="bg-white dark:bg-gray-800 w-full sm:max-w-md sm:rounded-xl rounded-t-xl p-4 space-y-4 max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-bold">Download decks</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">x</button>
+        </div>
+        {error && <p className="text-sm text-red-500">{error}</p>}
+        {remoteDecks === null ? (
+          <div className="py-8 flex justify-center"><Spinner className="h-6 w-6 text-blue-600" /></div>
+        ) : remoteDecks.length === 0 ? (
+          <p className="text-sm text-gray-500 text-center py-8">No decks available on the server.</p>
+        ) : (
+          <div className="divide-y divide-gray-100 dark:divide-gray-700">
+            {remoteDecks.map(deck => {
+              const done = !downloading && isDownloaded(deck.id);
+              return (
+                <div key={deck.id} className="flex items-center justify-between py-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium truncate">{deck.name}</p>
+                    <p className="text-xs text-gray-500">{deck.cardCount ?? 0} cards</p>
+                  </div>
+                  {done ? (
+                    <span className="text-green-500 text-xs font-medium">Downloaded</span>
+                  ) : (
+                    <button onClick={() => handleDownload(deck)} disabled={downloading !== null}
+                      className="text-blue-600 text-sm font-medium disabled:opacity-50 min-h-[44px] px-3">
+                      {downloading === deck.id ? '...' : 'Download'}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
-        <input type="file" accept="image/*" className="hidden" ref={fileRef} onChange={handlePhotoChange} />
-        <button className="text-sm text-blue-600" onClick={() => fileRef.current?.click()}>Add photo</button>
-        <div className="flex space-x-2">
-          <button className="flex-1 py-2 bg-blue-600 text-white rounded-lg min-h-[44px] disabled:opacity-50 flex items-center justify-center space-x-2"
-            disabled={!front.trim() || !back.trim() || submitting} onClick={handleSubmit}>
-            {submitting && <Spinner />}
-            <span>Add</span>
-          </button>
-          <button className="flex-1 py-2 bg-gray-400 text-white rounded-lg" onClick={onClose}>Cancel</button>
-        </div>
       </div>
     </div>
   );
 };
 
 // ─── DeckListScreen ───
-
+// Phase 1: renders locally downloaded decks; the header menu offers
+// Download / Export / Settings / Clear. Users cannot modify deck content.
 const DeckListScreen = ({ session, onSelectDeck, onOpenSettings }) => {
-  const [decks, setDecks] = useState([]);
-  const [deckStats, setDeckStats] = useState({});
-  const [loading, setLoading] = useState(true);
-  const [showAdd, setShowAdd] = useState(false);
+  const [decks, setDecks] = useState(() => Object.values(loadLocalDecks()));
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [showDownload, setShowDownload] = useState(false);
+  const [showConfirmClear, setShowConfirmClear] = useState(false);
 
-  const loadDecks = useCallback(async () => {
-    if (!session) return;
-    setLoading(true);
-    try {
-      const [decksRes, statsRes] = await Promise.all([
-        apiGet(`${session.url}?endpoint=getDecks&pwHash=${session.pwHash}`),
-        apiGet(`${session.url}?endpoint=getAllDeckStats&pwHash=${session.pwHash}`)
-      ]);
-      if (decksRes.status === 'ok') {
-        setDecks(decksRes.decks || []);
-      }
-      if (statsRes.status === 'ok') {
-        setDeckStats(statsRes.deckStats || {});
-      }
-    } catch (err) {
-      console.error('Error loading decks:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [session]);
+  const reload = useCallback(() => setDecks(Object.values(loadLocalDecks())), []);
 
-  useEffect(() => { loadDecks(); }, [loadDecks]);
+  useEffect(() => { reload(); }, [reload]);
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Spinner className="h-8 w-8 text-blue-600" />
-      </div>
-    );
-  }
+  const handleExport = () => { exportStatsJSON(session); setMenuOpen(false); };
+  const handleDelete = (id) => { deleteLocalDeck(id); reload(); };
+  const handleClear = () => { clearLocalDecks(); setShowConfirmClear(false); setMenuOpen(false); reload(); };
+
+  const deckStats = {};
+  for (const d of decks) deckStats[d.id] = getLocalStats(d);
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      <div className="flex items-center px-4 py-3 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+      <div className="flex items-center justify-between px-4 py-3 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
         <h1 className="text-lg font-bold">Flashy</h1>
+        <div className="relative">
+          <button onClick={() => setMenuOpen(o => !o)}
+            className="w-10 h-10 flex items-center justify-center rounded-lg text-gray-600 dark:text-gray-300 active:scale-95" aria-label="Menu">
+            <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="12" cy="19" r="1.6" /></svg>
+          </button>
+          {menuOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
+              <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 py-1">
+                <button onClick={() => { setMenuOpen(false); setShowDownload(true); }}
+                  className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700">Download decks</button>
+                <button onClick={handleExport}
+                  className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700">Export stats</button>
+                <button onClick={() => { setMenuOpen(false); onOpenSettings(); }}
+                  className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700">Settings</button>
+                <button onClick={() => { setMenuOpen(false); setShowConfirmClear(true); }}
+                  className="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-gray-100 dark:hover:bg-gray-700">Clear local decks</button>
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       <div className="p-4">
         {decks.length === 0 ? (
           <div className="text-center py-16 text-gray-500">
-            <p className="text-4xl mb-4">No decks yet</p>
-            <p className="text-sm">Tap + to create your first deck</p>
+            <p className="text-4xl mb-4">No downloads yet</p>
+            <p className="text-sm">Tap the menu top-right to download decks</p>
+            <p className="text-sm text-gray-400">then choose Download decks</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-3">
             {decks.map(deck => {
-              const s = deckStats[deck.id] || {};
+              const s = deckStats[deck.id];
               return (
-                <button key={deck.id}
-                  className="text-left p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-blue-400 transition-colors"
-                  onClick={() => onSelectDeck(deck)}>
-                  <p className="font-bold">{deck.name}</p>
-                  {deck.description && <p className="text-xs text-gray-500 mt-1">{deck.description}</p>}
-                  <div className="mt-2 flex items-center space-x-3 text-xs text-gray-400">
-                    <span>{s.total || 0} cards</span>
-                    {(s.dueToday || 0) > 0 && (
-                      <span className="bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 px-2 py-0.5 rounded-full font-medium">
-                        {s.dueToday} due
-                      </span>
-                    )}
-                  </div>
-                </button>
+                <div key={deck.id}
+                  className="flex items-stretch bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+                  <button className="flex-1 text-left p-4" onClick={() => onSelectDeck(deck)}>
+                    <p className="font-bold">{deck.name}</p>
+                    {deck.description && <p className="text-xs text-gray-500 mt-1">{deck.description}</p>}
+                    <div className="mt-2 flex items-center space-x-3 text-xs text-gray-400">
+                      <span>{s.total || 0} cards</span>
+                      {(s.dueToday || 0) > 0 && (
+                        <span className="bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 px-2 py-0.5 rounded-full font-medium">
+                          {s.dueToday} due
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                  <button onClick={() => handleDelete(deck.id)}
+                    className="flex items-center px-3 text-gray-400 hover:text-red-500 active:scale-95 border-l border-gray-100 dark:border-gray-700" aria-label="Delete deck">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.9 12.1a2 2 0 01-2 1.9H7.9a2 2 0 01-2-1.9L5 7m1 0h14m-5 3v6m-4-6v6" /></svg>
+                  </button>
+                </div>
               );
             })}
           </div>
         )}
       </div>
 
-      <div className="fixed bottom-40 right-6 z-30">
-        <button className="w-14 h-14 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 rounded-full shadow-lg flex items-center justify-center active:scale-95 transition-transform"
-          onClick={onOpenSettings}>
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-        </button>
-      </div>
-
-      <div className="fixed bottom-24 right-6 z-30">
-        <button className="w-14 h-14 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-lg flex items-center justify-center text-2xl active:scale-95"
-          onClick={() => setShowAdd(true)}>+</button>
-      </div>
-
-      {showAdd && <AddDeckModal session={session} onClose={() => setShowAdd(false)} onAdded={() => { setShowAdd(false); loadDecks(); }} />}
+      {showDownload && <DownloadDecksModal session={session} onClose={() => setShowDownload(false)} onChanged={reload} />}
+      {showConfirmClear && (
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50" onClick={() => setShowConfirmClear(false)}>
+          <div className="bg-white dark:bg-gray-800 w-full sm:max-w-sm sm:rounded-xl rounded-t-xl p-4 space-y-4" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-bold">Clear all local decks?</h3>
+            <p className="text-sm text-gray-500">This removes every downloaded deck and your local review log from this device. It does not affect the server.</p>
+            <div className="flex gap-2">
+              <button onClick={() => setShowConfirmClear(false)} className="flex-1 py-2 rounded-lg text-sm min-h-[44px] border border-gray-300 dark:border-gray-600">Cancel</button>
+              <button onClick={handleClear} className="flex-1 py-2 bg-red-600 text-white rounded-lg text-sm min-h-[44px]">Clear</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -387,9 +502,10 @@ const ReviewScreen = ({ session, deck, onBack }) => {
   const [flipped, setFlipped] = useState(false);
   const [loading, setLoading] = useState(true);
   const [direction, setDirection] = useState('front→back');
-  const [sessionBatchId] = useState(() => crypto.randomUUID ? crypto.randomUUID() : Date.now().toString());
+
   const [sessionStats, setSessionStats] = useState({ reviewed: 0, correct: 0, startTime: Date.now() });
   const [complete, setComplete] = useState(false);
+  const [srs, setSrs] = useState(() => ({ ...(deck.srs || {}) }));
   const cardRef = useRef(null);
   const touchStartRef = useRef({ x: 0, y: 0, time: 0 });
 
@@ -397,8 +513,10 @@ const ReviewScreen = ({ session, deck, onBack }) => {
     const loadDue = async () => {
       setLoading(true);
       try {
-        const res = await apiGet(`${session.url}?endpoint=getDueCards&deckId=${deck.id}&pwHash=${session.pwHash}`);
-        if (res.status === 'ok') setCards(res.cards || []);
+        const all = deck.cards || [];
+        const st0 = deck.srs || {};
+        const today = todayIso();
+        setCards(all.filter(c => { const st = st0[String(c.id)]; return !st || st.dueDate <= today; }));
       } catch (err) {
         console.error('Error loading due cards:', err);
       } finally {
@@ -412,15 +530,14 @@ const ReviewScreen = ({ session, deck, onBack }) => {
     const card = cards[currentIndex];
     const responseTimeMs = Date.now() - touchStartRef.current.time;
 
-    await apiPost(session.url, {
-      endpoint: 'rateCard',
-      pwHash: session.pwHash,
-      cardId: card.id,
-      deckId: deck.id,
-      rating,
-      responseTimeMs,
-      sessionBatchId
-    });
+    const prevState = srs[String(card.id)] || defaultSrsCard();
+    const next = computeNextReview(prevState, rating);
+    const updated = { ...srs, [String(card.id)]: next };
+    setSrs(updated);
+    const localDecks = loadLocalDecks();
+    const ld = localDecks[String(deck.id)];
+    if (ld) { ld.srs = updated; saveLocalDecks(localDecks); }
+    appendLocalLog({ timestamp: new Date().toISOString(), cardId: String(card.id), deckId: String(deck.id), rating, responseTimeMs });
 
     setSessionStats(prev => ({
       reviewed: prev.reviewed + 1,
@@ -516,9 +633,14 @@ const ReviewScreen = ({ session, deck, onBack }) => {
   const speakTag = parseSpeakTag(card.notes);
 
   return (
-    <div className="min-h-screen flex flex-col bg-gray-50 dark:bg-gray-900 select-none">
-      <div className="flex items-center justify-between px-4 py-3 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-        <span className="text-sm text-gray-500">{currentIndex + 1} / {cards.length}</span>
+    <div className="flex flex-col min-h-full bg-gray-50 dark:bg-gray-900 select-none">
+      <div className="flex items-center gap-2 px-3 py-2 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+        <button onClick={onBack} aria-label="Exit review"
+          className="flex items-center gap-1 px-2 py-1 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 active:scale-95 transition-transform">
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
+          <span className="text-xs font-medium">Exit</span>
+        </button>
+        <span className="flex-1 text-center text-xs text-gray-500">{currentIndex + 1} / {cards.length}</span>
         <button className="text-xs px-2 py-1 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 active:scale-95 transition-transform"
           onClick={() => setDirection(d => d === 'front→back' ? 'back→front' : 'front→back')}>
           {direction === 'front→back' ? 'front → back' : 'back → front'}
@@ -595,7 +717,7 @@ const LearnScreen = ({ session, deck, onBack }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [shuffled, setShuffled] = useState(false);
+
   const [direction, setDirection] = useState('front→back');
   const touchStartRef = useRef({ x: 0, y: 0 });
 
@@ -603,8 +725,7 @@ const LearnScreen = ({ session, deck, onBack }) => {
     const loadCards = async () => {
       setLoading(true);
       try {
-        const res = await apiGet(`${session.url}?endpoint=getCards&deckId=${deck.id}&pwHash=${session.pwHash}`);
-        if (res.status === 'ok') setCards(res.cards || []);
+        setCards(deck.cards || []);
       } catch (err) {
         console.error('Error loading cards:', err);
       } finally {
@@ -622,14 +743,6 @@ const LearnScreen = ({ session, deck, onBack }) => {
   const goPrev = () => {
     setCurrentIndex(i => (i - 1 + cards.length) % cards.length);
     setFlipped(false);
-  };
-
-  const shuffleCards = () => {
-    const shuffledArr = [...cards].sort(() => Math.random() - 0.5);
-    setCards(shuffledArr);
-    setCurrentIndex(0);
-    setFlipped(false);
-    setShuffled(true);
   };
 
   const handleTouchStart = (e) => {
@@ -680,7 +793,7 @@ const LearnScreen = ({ session, deck, onBack }) => {
   const speakTag = parseSpeakTag(card.notes);
 
   return (
-    <div className="min-h-screen flex flex-col bg-gray-50 dark:bg-gray-900 select-none">
+    <div className="flex flex-col min-h-full bg-gray-50 dark:bg-gray-900 select-none">
       <div className="flex items-center justify-between px-4 py-3 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
         <span className="font-bold">Learn</span>
         <div className="flex items-center space-x-2">
@@ -730,10 +843,10 @@ const LearnScreen = ({ session, deck, onBack }) => {
             onClick={goPrev}>
             ← Prev
           </button>
-          <button className="py-3 px-4 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-xl font-medium min-h-[52px] active:scale-95 transition-transform"
+          {/* <button className="py-3 px-4 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-xl font-medium min-h-[52px] active:scale-95 transition-transform"
             onClick={shuffleCards}>
             🔀
-          </button>
+          </button> */}
           <button className="flex-1 py-3 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-xl font-medium min-h-[52px] active:scale-95 transition-transform"
             onClick={goNext}>
             Next →
@@ -753,58 +866,11 @@ const LearnScreen = ({ session, deck, onBack }) => {
 
 // ─── DeckDetailScreen ───
 
-const DeckDetailScreen = ({ session, deck, onBack, onReview, onLearn }) => {
+const DeckDetailScreen = ({ deck, onBack, onReview, onLearn }) => {
   const [tab, setTab] = useState('cards');
-  const [cards, setCards] = useState([]);
-  const [stats, setStats] = useState({});
-  const [progress, setProgress] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [showAddCard, setShowAddCard] = useState(false);
-  const [editingCard, setEditingCard] = useState(null);
-  const [deleting, setDeleting] = useState(null);
-
-  const loadData = useCallback(async () => {
-    if (!session) return;
-    setLoading(true);
-    try {
-      const [cardsRes, statsRes, progressRes] = await Promise.all([
-        apiGet(`${session.url}?endpoint=getCards&deckId=${deck.id}&pwHash=${session.pwHash}`),
-        apiGet(`${session.url}?endpoint=getDeckStats&deckId=${deck.id}&pwHash=${session.pwHash}`),
-        apiGet(`${session.url}?endpoint=getProgress&deckId=${deck.id}&pwHash=${session.pwHash}`)
-      ]);
-      if (cardsRes.status === 'ok') setCards(cardsRes.cards || []);
-      if (statsRes.status === 'ok') setStats(statsRes.stats || {});
-      if (progressRes.status === 'ok') setProgress(progressRes.progress || null);
-    } catch (err) {
-      console.error('Error loading deck:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [session, deck]);
-
-  useEffect(() => { loadData(); }, [loadData]);
-
-  const handleDeleteCard = async (cardId) => {
-    if (!confirm('Delete this card?')) return;
-    setDeleting(cardId);
-    await apiPost(session.url, { endpoint: 'deleteCard', pwHash: session.pwHash, deckId: deck.id, id: cardId });
-    setDeleting(null);
-    loadData();
-  };
-
-  const handleUpdateCard = async (cardId, updates) => {
-    await apiPost(session.url, { endpoint: 'updateCard', pwHash: session.pwHash, deckId: deck.id, id: cardId, ...updates });
-    setEditingCard(null);
-    loadData();
-  };
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Spinner className="h-8 w-8 text-blue-600" />
-      </div>
-    );
-  }
+  // Phase 2: deck content + stats are local. The user can only read and review.
+  const cards = deck.cards || [];
+  const stats = getLocalStats(deck);
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50 dark:bg-gray-900">
@@ -822,34 +888,19 @@ const DeckDetailScreen = ({ session, deck, onBack, onReview, onLearn }) => {
       <div className="flex-1 overflow-y-auto">
         {tab === 'cards' ? (
           <div className="divide-y divide-gray-100 dark:divide-gray-800">
-            {cards.length === 0 && <p className="p-4 text-center text-gray-500">No cards yet</p>}
+            {cards.length === 0 && <p className="p-4 text-center text-gray-500">No cards in this deck</p>}
             {cards.map(card => (
               <div key={card.id} className="px-4 py-3 bg-white dark:bg-gray-800">
-                {editingCard === card.id ? (
-                  <EditCardInline card={card} session={session}
-                    onSave={(updates) => handleUpdateCard(card.id, updates)}
-                    onCancel={() => setEditingCard(null)} />
-                ) : (
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1 min-w-0 mr-2">
-                      <p className="font-medium truncate">{card.front}</p>
-                      <p className="text-sm text-gray-500 truncate">{card.back}</p>
-                      {card.notes && <p className="text-xs text-gray-400 truncate mt-1">{filterDisplayNotes(card.notes)}</p>}
-                    </div>
-                    <div className="flex space-x-1 flex-shrink-0">
-                      <button className="p-2 text-gray-400 hover:text-blue-600" onClick={() => setEditingCard(card.id)}>
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-                      </button>
-                      <button className="p-2 text-gray-400 hover:text-red-600"
-                        disabled={deleting === card.id}
-                        onClick={() => handleDeleteCard(card.id)}>
-                        {deleting === card.id ? <Spinner className="h-5 w-5" /> : (
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                        )}
-                      </button>
-                    </div>
+                <div className="flex items-start justify-between">
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium">{card.front || '(no front)'}</p>
+                    <p className="text-sm text-gray-500">{card.back}</p>
+                    {card.notes && <p className="text-xs text-gray-400 mt-1">{filterDisplayNotes(card.notes)}</p>}
+                    {card.photoUrl && (
+                      <img src={getDirectPhotoUrl(card.photoUrl)} className="max-w-full max-h-40 object-contain rounded-lg mt-2" alt="" />
+                    )}
                   </div>
-                )}
+                </div>
               </div>
             ))}
           </div>
@@ -857,39 +908,16 @@ const DeckDetailScreen = ({ session, deck, onBack, onReview, onLearn }) => {
           <div className="p-4 space-y-4">
             <StatCard label="Total Cards" value={stats.total || 0} />
             <StatCard label="Due Today" value={stats.dueToday || 0} color="text-orange-500" />
-            <StatCard label="Reviewed Today" value={stats.reviewed || 0} color="text-green-500" />
+            <StatCard label="Reviewed Today" value={stats.reviewedToday || 0} color="text-green-500" />
             <StatCard label="Mastered" value={stats.mastered || 0} color="text-blue-500" />
-            {progress && (
-              <>
-                <StatCard label="Accuracy (30d)" value={`${progress.accuracy}%`} color={progress.accuracy >= 80 ? 'text-green-500' : progress.accuracy >= 60 ? 'text-orange-500' : 'text-red-500'} />
-                <StatCard label="Streak" value={`${progress.streak} days`} color="text-purple-500" />
-                {progress.weakCards && progress.weakCards.length > 0 && (
-                  <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
-                    <p className="text-sm font-medium text-gray-500 mb-2">Weak Cards ({progress.weakCards.length})</p>
-                    {progress.weakCards.slice(0, 5).map(wc => (
-                      <p key={wc.id} className="text-sm truncate py-1 border-b border-gray-100 dark:border-gray-700 last:border-0">
-                        {wc.front}
-                      </p>
-                    ))}
-                  </div>
-                )}
-                {progress.suggestions && progress.suggestions.length > 0 && (
-                  <div className="bg-blue-50 dark:bg-blue-950/30 rounded-xl p-4 border border-blue-200 dark:border-blue-900/30">
-                    <p className="text-sm font-medium text-blue-800 dark:text-blue-200 mb-2">Suggestions</p>
-                    {progress.suggestions.map((s, i) => (
-                      <p key={i} className="text-sm text-blue-700 dark:text-blue-300 py-1">{s}</p>
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
+            <p className="text-xs text-gray-400">Reviews and card content are stored on this device.</p>
           </div>
         )}
       </div>
 
       <div className="fixed bottom-72 right-6 z-30">
         <button className="w-14 h-14 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 rounded-full shadow-lg flex items-center justify-center active:scale-95 transition-transform"
-          onClick={onBack}>
+          onClick={onBack} aria-label="Back to decks">
           <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
         </button>
       </div>
@@ -897,7 +925,7 @@ const DeckDetailScreen = ({ session, deck, onBack, onReview, onLearn }) => {
       {(stats.total || 0) > 0 && (
         <div className="fixed bottom-56 right-6 z-30">
           <button className="w-14 h-14 bg-green-600 hover:bg-green-700 text-white rounded-full shadow-lg flex items-center justify-center active:scale-95 transition-transform"
-            onClick={() => onLearn(deck)}>
+            onClick={() => onLearn(deck)} aria-label="Learn">
             <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>
           </button>
         </div>
@@ -905,53 +933,12 @@ const DeckDetailScreen = ({ session, deck, onBack, onReview, onLearn }) => {
       {(stats.dueToday || 0) > 0 && (
         <div className="fixed bottom-40 right-6 z-30">
           <button className="w-14 h-14 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-lg flex items-center justify-center active:scale-95 transition-transform relative"
-            onClick={() => onReview(deck)}>
+            onClick={() => onReview(deck)} aria-label="Review">
             <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
             <span className="absolute -top-1 -right-1 bg-orange-500 text-white text-xs font-bold rounded-full min-w-[20px] h-5 flex items-center justify-center px-1">{stats.dueToday}</span>
           </button>
         </div>
       )}
-      {tab === 'cards' && (
-        <div className="fixed bottom-24 right-6 z-30">
-          <button className="w-14 h-14 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-lg flex items-center justify-center text-2xl active:scale-95"
-            onClick={() => setShowAddCard(true)}>+</button>
-        </div>
-      )}
-
-      {showAddCard && <AddCardModal deckId={deck.id} session={session} onClose={() => setShowAddCard(false)} onAdded={() => { setShowAddCard(false); loadData(); }} />}
-    </div>
-  );
-};
-
-// ─── EditCardInline ───
-
-const EditCardInline = ({ card, session, onSave, onCancel }) => {
-  const [front, setFront] = useState(card.front);
-  const [back, setBack] = useState(card.back);
-  const [notes, setNotes] = useState(card.notes || '');
-  const [saving, setSaving] = useState(false);
-
-  const handleSave = async () => {
-    setSaving(true);
-    await onSave({ front, back, notes });
-    setSaving(false);
-  };
-
-  return (
-    <div className="space-y-2">
-      <textarea className="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 text-sm"
-        value={front} onChange={e => setFront(e.target.value)} rows={2} />
-      <textarea className="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 text-sm"
-        value={back} onChange={e => setBack(e.target.value)} rows={2} />
-      <textarea className="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 text-sm"
-        value={notes} onChange={e => setNotes(e.target.value)} rows={1} placeholder="Notes" />
-      <div className="flex space-x-2">
-        <button className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm min-h-[40px] disabled:opacity-50"
-          disabled={saving} onClick={handleSave}>
-          {saving ? 'Saving...' : 'Save'}
-        </button>
-        <button className="px-4 py-2 bg-gray-400 text-white rounded-lg text-sm" onClick={onCancel}>Cancel</button>
-      </div>
     </div>
   );
 };
@@ -966,37 +953,12 @@ const StatCard = ({ label, value, color = '' }) => (
 );
 
 // ─── ProgressScreen ───
-
-const ProgressScreen = ({ session }) => {
-  const [progress, setProgress] = useState(null);
-  const [decks, setDecks] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [deckRes, progRes] = await Promise.all([
-        apiGet(`${session.url}?endpoint=getDecks&pwHash=${session.pwHash}`),
-        apiGet(`${session.url}?endpoint=getProgress&pwHash=${session.pwHash}`)
-      ]);
-      if (deckRes.status === 'ok') setDecks(deckRes.decks || []);
-      if (progRes.status === 'ok') setProgress(progRes.progress || null);
-    } catch (err) {
-      console.error('Error loading progress:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [session]);
-
-  useEffect(() => { load(); }, [load]);
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Spinner className="h-8 w-8 text-blue-600" />
-      </div>
-    );
-  }
+// Read-only: accuracy / streak / weak cards / suggestions are derived from
+// the local review log (flashy_logs) and per-deck SRS state. No server call.
+const ProgressScreen = () => {
+  const [tick, setTick] = useState(0);
+  const decks = useMemo(() => Object.values(loadLocalDecks()), [tick]);
+  const progress = useMemo(() => getLocalProgress(), [tick]);
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
@@ -1005,57 +967,70 @@ const ProgressScreen = ({ session }) => {
       </div>
 
       <div className="p-4 space-y-4">
-        {progress && (
-          <>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700 text-center">
-                <p className="text-3xl font-bold text-blue-600">{progress.accuracy}%</p>
-                <p className="text-xs text-gray-500 mt-1">Accuracy</p>
-              </div>
-              <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700 text-center">
-                <p className="text-3xl font-bold text-purple-600">{progress.streak}</p>
-                <p className="text-xs text-gray-500 mt-1">Day Streak</p>
-              </div>
-            </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700 text-center">
+            <p className="text-3xl font-bold text-blue-600">{progress.accuracy}%</p>
+            <p className="text-xs text-gray-500 mt-1">Accuracy</p>
+          </div>
+          <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700 text-center">
+            <p className="text-3xl font-bold text-purple-600">{progress.streak}</p>
+            <p className="text-xs text-gray-500 mt-1">Day Streak</p>
+          </div>
+        </div>
 
-            {progress.suggestions && progress.suggestions.length > 0 && (
-              <div className="bg-blue-50 dark:bg-blue-950/30 rounded-xl p-4 border border-blue-200 dark:border-blue-900/30">
-                <p className="text-sm font-medium text-blue-800 dark:text-blue-200 mb-2">Suggestions</p>
-                {progress.suggestions.map((s, i) => (
-                  <p key={i} className="text-sm text-blue-700 dark:text-blue-300 py-1">{s}</p>
-                ))}
-              </div>
-            )}
+        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700 text-center">
+          <p className="text-xl font-bold">{progress.totalReviews}</p>
+          <p className="text-xs text-gray-500 mt-1">Total Reviews</p>
+        </div>
 
-            {progress.weakCards && progress.weakCards.length > 0 && (
-              <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
-                <p className="text-sm font-medium text-gray-500 mb-3">Weak Cards ({progress.weakCards.length})</p>
-                {progress.weakCards.map(wc => (
-                  <div key={wc.id} className="py-2 border-b border-gray-100 dark:border-gray-700 last:border-0">
-                    <p className="text-sm font-medium truncate">{wc.front}</p>
-                    <p className="text-xs text-gray-400 truncate">{wc.back}</p>
-                  </div>
-                ))}
-              </div>
-            )}
+        {progress.suggestions && progress.suggestions.length > 0 && (
+          <div className="bg-blue-50 dark:bg-blue-950/30 rounded-xl p-4 border border-blue-200 dark:border-blue-900/30">
+            <p className="text-sm font-medium text-blue-800 dark:text-blue-200 mb-2">Suggestions</p>
+            {progress.suggestions.map((s, i) => (
+              <p key={i} className="text-sm text-blue-700 dark:text-blue-300 py-1">{s}</p>
+            ))}
+          </div>
+        )}
 
-            <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
-              <p className="text-sm font-medium text-gray-500 mb-3">Decks</p>
-              {decks.length === 0 ? (
-                <p className="text-sm text-gray-400">No decks yet</p>
-              ) : decks.map(d => (
-                <div key={d.id} className="flex items-center justify-between py-2 border-b border-gray-100 dark:border-gray-700 last:border-0">
-                  <span className="text-sm font-medium">{d.name}</span>
-                </div>
-              ))}
-            </div>
-          </>
+        {progress.weakCards && progress.weakCards.length > 0 && (
+          <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
+            <p className="text-sm font-medium text-gray-500 mb-3">Weak Cards ({progress.weakCards.length})</p>
+            {progress.weakCards.map(wc => (
+              <div key={wc.id} className="py-2 border-b border-gray-100 dark:border-gray-700 last:border-0">
+                <p className="text-sm font-medium truncate">{wc.front}</p>
+                <p className="text-xs text-gray-400 truncate">{wc.back}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
+          <p className="text-sm font-medium text-gray-500 mb-3">Decks</p>
+          {decks.length === 0 ? (
+            <p className="text-sm text-gray-400">No decks downloaded yet</p>
+          ) : decks.map(d => {
+            const st = getLocalStats(d);
+            return (
+              <div key={d.id} className="flex items-center justify-between py-2 border-b border-gray-100 dark:border-gray-700 last:border-0">
+                <span className="text-sm font-medium">{d.name}</span>
+                <span className="text-xs text-gray-400">
+                  {st.dueToday} due · {st.mastered}/{st.total} mastered
+                </span>
+              </div>
+            );
+          })}
+        </div>
+
+        {decks.length === 0 && (
+          <p className="text-center text-xs text-gray-400">
+            Download a deck (Decks → ⋮ → Download) to start tracking progress.
+          </p>
         )}
       </div>
 
       <div className="fixed bottom-24 right-6 z-30">
         <button className="w-14 h-14 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 rounded-full shadow-lg flex items-center justify-center active:scale-95 transition-transform"
-          onClick={load}>
+          onClick={() => setTick(t => t + 1)} aria-label="Refresh">
           <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
         </button>
       </div>
@@ -1173,7 +1148,8 @@ const App = () => {
   if (!session) return <AuthScreen onLogin={handleLogin} />;
 
   return (
-    <div className="h-screen flex flex-col relative overflow-hidden">
+    <div className="h-full flex flex-col relative overflow-hidden">
+      <main className="flex-1 min-h-0 overflow-y-auto">
       {screen === 'decks' && (
         <DeckListScreen session={session} onSelectDeck={handleSelectDeck} onOpenSettings={() => setShowSettings(true)} />
       )}
@@ -1187,10 +1163,11 @@ const App = () => {
         <LearnScreen session={session} deck={currentDeck} onBack={handleBackToDecks} />
       )}
       {screen === 'progress' && (
-        <ProgressScreen session={session} />
+        <ProgressScreen />
       )}
 
-      <div className="flex border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+      </main>
+      <nav className="flex flex-shrink-0 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 pb-safe">
         <button className={`flex-1 min-h-[48px] py-3 text-sm font-medium flex flex-col items-center justify-center ${screen === 'decks' || screen === 'detail' || screen === 'review' ? 'text-blue-600' : 'text-gray-500'}`}
           onClick={() => { setScreen('decks'); setCurrentDeck(null); }}>
           <span className="text-xl mb-0.5">Decks</span>
@@ -1199,7 +1176,7 @@ const App = () => {
           onClick={() => setScreen('progress')}>
           <span className="text-xl mb-0.5">Progress</span>
         </button>
-      </div>
+      </nav>
 
       {showSettings && (
         <SettingsModal session={session} onClose={() => setShowSettings(false)}
