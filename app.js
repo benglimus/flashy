@@ -1,3 +1,5 @@
+//Version 0.9.0
+
 const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
 // ─── Utilities ───
