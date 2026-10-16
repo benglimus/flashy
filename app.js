@@ -149,7 +149,7 @@ const downloadDeck = async (meta, session) => {
     description: meta.description || '',
     created: meta.created || todayIso(),
     syncedAt: new Date().toISOString(),
-    cards: (res.cards || []).map(c => ({ id: String(c.id), front: c.front, back: c.back, notes: c.notes, photoUrl: c.photoUrl, created: c.created, modified: c.modified })),
+    cards: (res.cards || []).map(c => ({ id: String(c.id), front: c.front, back: c.back, notes: c.notes, photoUrl: c.photoUrl, backPhotoUrl: c.backPhotoUrl, created: c.created, modified: c.modified })),
     srs: {},
   };
   const decks = loadLocalDecks();
@@ -630,6 +630,9 @@ const ReviewScreen = ({ session, deck, onBack }) => {
   const showFrontFirst = direction === 'front→back';
   const initialFace = showFrontFirst ? card.front : card.back;
   const flippedFace = showFrontFirst ? card.back : card.front;
+  // Photo is tied to its content: the front photo faces up first, the back photo on the flip.
+  const frontFacePhoto = showFrontFirst ? card.photoUrl : card.backPhotoUrl;
+  const backFacePhoto = showFrontFirst ? card.backPhotoUrl : card.photoUrl;
   const speakTag = parseSpeakTag(card.notes);
 
   return (
@@ -659,13 +662,16 @@ const ReviewScreen = ({ session, deck, onBack }) => {
         <div className="flashcard-flip w-full max-w-sm" style={{ minHeight: '300px' }}>
           <div className={`flashcard-inner w-full h-full ${flipped ? 'flipped' : ''}`} style={{ minHeight: '300px' }}>
             <div className="flashcard-front w-full h-full bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 flex flex-col items-center justify-center p-6 min-h-[300px]">
-              {card.photoUrl && (
-                <img src={getDirectPhotoUrl(card.photoUrl)} className="max-w-full max-h-40 object-contain rounded-lg mb-4" alt="" />
+              {frontFacePhoto && getDirectPhotoUrl(frontFacePhoto) && (
+                <img src={getDirectPhotoUrl(frontFacePhoto)} className="max-w-full max-h-40 object-contain rounded-lg mb-4" alt="" />
               )}
               <p className="text-xl text-center font-medium">{initialFace}</p>
               {!flipped && <p className="text-xs text-gray-400 mt-4 swipe-hint">tap to reveal</p>}
             </div>
             <div className="flashcard-back w-full h-full bg-blue-50 dark:bg-blue-950/30 rounded-2xl shadow-lg border border-blue-200 dark:border-blue-900/30 flex flex-col items-center justify-center p-6 min-h-[300px]">
+              {backFacePhoto && getDirectPhotoUrl(backFacePhoto) && (
+                <img src={getDirectPhotoUrl(backFacePhoto)} className="max-w-full max-h-40 object-contain rounded-lg mb-4" alt="" />
+              )}
               <p className="text-xl text-center font-bold text-blue-900 dark:text-blue-100">{flippedFace}</p>
               {card.notes && <p className="text-sm text-blue-700 dark:text-blue-300 mt-3 text-center">{filterDisplayNotes(card.notes)}</p>}
             </div>
@@ -790,6 +796,9 @@ const LearnScreen = ({ session, deck, onBack }) => {
   const showFrontFirst = direction === 'front→back';
   const initialFace = showFrontFirst ? card.front : card.back;
   const flippedFace = showFrontFirst ? card.back : card.front;
+  // Photo is tied to its content: the front photo faces up first, the back photo on the flip.
+  const frontFacePhoto = showFrontFirst ? card.photoUrl : card.backPhotoUrl;
+  const backFacePhoto = showFrontFirst ? card.backPhotoUrl : card.photoUrl;
   const speakTag = parseSpeakTag(card.notes);
 
   return (
@@ -812,13 +821,16 @@ const LearnScreen = ({ session, deck, onBack }) => {
         <div className="flashcard-flip w-full max-w-sm" style={{ minHeight: '300px' }}>
           <div className={`flashcard-inner w-full h-full ${flipped ? 'flipped' : ''}`} style={{ minHeight: '300px' }}>
             <div className="flashcard-front w-full h-full bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 flex flex-col items-center justify-center p-6 min-h-[300px]">
-              {card.photoUrl && (
-                <img src={getDirectPhotoUrl(card.photoUrl)} className="max-w-full max-h-40 object-contain rounded-lg mb-4" alt="" />
+              {frontFacePhoto && getDirectPhotoUrl(frontFacePhoto) && (
+                <img src={getDirectPhotoUrl(frontFacePhoto)} className="max-w-full max-h-40 object-contain rounded-lg mb-4" alt="" />
               )}
               <p className="text-xl text-center font-medium">{initialFace}</p>
               {!flipped && <p className="text-xs text-gray-400 mt-4 swipe-hint">tap to reveal</p>}
             </div>
             <div className="flashcard-back w-full h-full bg-blue-50 dark:bg-blue-950/30 rounded-2xl shadow-lg border border-blue-200 dark:border-blue-900/30 flex flex-col items-center justify-center p-6 min-h-[300px]">
+              {backFacePhoto && getDirectPhotoUrl(backFacePhoto) && (
+                <img src={getDirectPhotoUrl(backFacePhoto)} className="max-w-full max-h-40 object-contain rounded-lg mb-4" alt="" />
+              )}
               <p className="text-xl text-center font-bold text-blue-900 dark:text-blue-100">{flippedFace}</p>
               {card.notes && <p className="text-sm text-blue-700 dark:text-blue-300 mt-3 text-center">{filterDisplayNotes(card.notes)}</p>}
             </div>
@@ -894,11 +906,14 @@ const DeckDetailScreen = ({ deck, onBack, onReview, onLearn }) => {
                 <div className="flex items-start justify-between">
                   <div className="flex-1 min-w-0">
                     <p className="font-medium">{card.front || '(no front)'}</p>
-                    <p className="text-sm text-gray-500">{card.back}</p>
-                    {card.notes && <p className="text-xs text-gray-400 mt-1">{filterDisplayNotes(card.notes)}</p>}
                     {card.photoUrl && (
-                      <img src={getDirectPhotoUrl(card.photoUrl)} className="max-w-full max-h-40 object-contain rounded-lg mt-2" alt="" />
+                      <img src={getDirectPhotoUrl(card.photoUrl)} className="max-w-full max-h-40 object-contain rounded-lg my-2" alt="" />
                     )}
+                    <p className="text-sm text-gray-500">{card.back}</p>
+                    {card.backPhotoUrl && (
+                      <img src={getDirectPhotoUrl(card.backPhotoUrl)} className="max-w-full max-h-40 object-contain rounded-lg my-2" alt="" />
+                    )}
+                    {card.notes && <p className="text-xs text-gray-400 mt-1">{filterDisplayNotes(card.notes)}</p>}
                   </div>
                 </div>
               </div>
